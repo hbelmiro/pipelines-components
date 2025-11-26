@@ -30,9 +30,9 @@ jobs:
           # - name: Image name suffix (final image: ghcr.io/kubeflow/pipelines-components-<name>)
           # - containerfile: Path to the Containerfile
           # - context: Build context directory
-          - name: placeholder
-            containerfile: .github/placeholder/Containerfile
-            context: .github/placeholder
+          - name: example
+            containerfile: examples/Containerfile
+            context: examples
 
     steps:
       - name: Checkout repository

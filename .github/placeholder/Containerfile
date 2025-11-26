@@ -1,7 +1,0 @@
-# Placeholder Containerfile for CI workflow validation
-# This file ensures the container build workflow can run even when no real images are defined
-# Replace this with actual component Containerfiles in the matrix
-
-FROM scratch
-LABEL placeholder="true"
-
