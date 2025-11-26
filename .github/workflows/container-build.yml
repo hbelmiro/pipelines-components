@@ -9,6 +9,7 @@ on:
   pull_request:
     branches:
       - main
+      - images-ci
 
 env:
   REGISTRY: ghcr.io
@@ -106,4 +107,3 @@ jobs:
 
       - name: Validate component compilation
         run: python .github/scripts/validate_components.py
-
