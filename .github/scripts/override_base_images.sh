@@ -16,14 +16,14 @@ SHORT_SHA="${COMMIT_SHA:0:7}"
 
 echo "Overriding base_image references from :main to :${SHORT_SHA}"
 
-if [ -d "components" ]; then
-    find components -name "*.py" -type f | while read -r file; do
-        if grep -q "${IMAGE_PREFIX}.*:main" "$file"; then
-            echo "Updating: $file"
-            sed -i "s|${IMAGE_PREFIX}-\([^:]*\):main|${IMAGE_PREFIX}-\1:${SHORT_SHA}|g" "$file"
-        fi
-    done
-else
-    echo "No components directory found"
-fi
+for dir in components pipelines; do
+    if [ -d "$dir" ]; then
+        find "$dir" -name "*.py" -type f | while read -r file; do
+            if grep -q "${IMAGE_PREFIX}.*:main" "$file"; then
+                echo "Updating: $file"
+                sed -i "s|${IMAGE_PREFIX}-\([^:]*\):main|${IMAGE_PREFIX}-\1:${SHORT_SHA}|g" "$file"
+            fi
+        done
+    fi
+done
 
