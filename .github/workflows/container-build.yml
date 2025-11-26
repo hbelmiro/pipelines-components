@@ -92,6 +92,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Check base_image tags use :main
+        run: ./.github/scripts/check_base_image_tags.sh "${{ env.IMAGE_PREFIX }}"
+
       - name: Override base_image values for PR validation
         run: ./.github/scripts/override_base_images.sh "$GITHUB_SHA" "${{ env.IMAGE_PREFIX }}"
 
