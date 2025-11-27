@@ -152,7 +152,7 @@ We welcome contributions from the community! To contribute:
    - `README.md` - Component documentation
    - `OWNERS` - Maintainer information
    - `tests/` - Unit tests
-   - `example_pipelines.py` - Usage examples
+   - `example_pipeline.py` - Usage examples
 
 4. **Submit PR**: Open a pull request with your contribution
 
