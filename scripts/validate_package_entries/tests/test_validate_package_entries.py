@@ -177,9 +177,7 @@ packages = [
         """Test that declaring only parent packages still passes (subpackages are covered)."""
         # Create root and nested package (e.g. training.finetuning)
         (components_training_structure / "__init__.py").write_text("")
-        finetuning_dir = (
-            components_training_structure / "components" / "training" / "finetuning"
-        )
+        finetuning_dir = components_training_structure / "components" / "training" / "finetuning"
         finetuning_dir.mkdir(parents=True)
         (finetuning_dir / "__init__.py").write_text("")
 
