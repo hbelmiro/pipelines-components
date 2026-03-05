@@ -9,9 +9,17 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 
-# Patterns for matching asset paths
+# Patterns for matching asset paths.
+# Subcategory paths have 4 segments: <type>/<category>/<subcategory>/<name>/
+# Direct paths have 3 segments:      <type>/<category>/<name>/
+COMPONENT_SUBCAT_PATTERN = re.compile(r"^components/([^/]+)/([^/]+)/([^/]+)/")
 COMPONENT_PATTERN = re.compile(r"^components/([^/]+)/([^/]+)/")
+PIPELINE_SUBCAT_PATTERN = re.compile(r"^pipelines/([^/]+)/([^/]+)/([^/]+)/")
 PIPELINE_PATTERN = re.compile(r"^pipelines/([^/]+)/([^/]+)/")
+
+# Subdirectories that belong to a direct asset, not a subcategory.
+# e.g. components/<cat>/<name>/tests/... should resolve to the direct asset
+_RESERVED_SUBDIRS = {"tests", "shared"}
 
 
 @dataclass
@@ -71,9 +79,15 @@ class GitClient:
         """Fetch the base branch if it's a remote reference.
 
         Args:
-            base_ref: Git reference (e.g., 'origin/main').
+            base_ref: Git reference (e.g., 'origin/main', 'origin/release-1.11').
         """
         if not base_ref.startswith("origin/"):
+            return
+
+        # origin/HEAD is a symbolic reference that exists after cloning and
+        # points to the default branch. It cannot be fetched like a regular
+        # branch since "HEAD" is not a valid branch name on the remote.
+        if base_ref == "origin/HEAD":
             return
 
         base_branch = base_ref.removeprefix("origin/")
@@ -196,8 +210,20 @@ class ChangeDetector:
         pipelines: set[str] = set()
 
         for file_path in files:
-            if match := COMPONENT_PATTERN.match(file_path):
+            if match := COMPONENT_SUBCAT_PATTERN.match(file_path):
+                category, second, third = match.group(1), match.group(2), match.group(3)
+                if third in _RESERVED_SUBDIRS:
+                    components.add(f"components/{category}/{second}")
+                else:
+                    components.add(f"components/{category}/{second}/{third}")
+            elif match := COMPONENT_PATTERN.match(file_path):
                 components.add(f"components/{match.group(1)}/{match.group(2)}")
+            elif match := PIPELINE_SUBCAT_PATTERN.match(file_path):
+                category, second, third = match.group(1), match.group(2), match.group(3)
+                if third in _RESERVED_SUBDIRS:
+                    pipelines.add(f"pipelines/{category}/{second}")
+                else:
+                    pipelines.add(f"pipelines/{category}/{second}/{third}")
             elif match := PIPELINE_PATTERN.match(file_path):
                 pipelines.add(f"pipelines/{match.group(1)}/{match.group(2)}")
 
@@ -314,8 +340,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--base-ref",
-        default="origin/main",
-        help="Base git reference to compare against (default: origin/main)",
+        default="origin/HEAD",
+        help="Base git reference to compare against (default: origin/HEAD)",
     )
     parser.add_argument(
         "--head-ref",
