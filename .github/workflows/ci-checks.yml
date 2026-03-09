@@ -1,0 +1,56 @@
+---
+# This workflow checks if all CI checks have passed and uploads PR context for label updates.
+name: CI Check
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled]
+
+jobs:
+  check_ci_status:
+    runs-on: ubuntu-24.04
+    permissions:
+      checks: read
+      contents: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v6
+
+      - name: Check for 'needs-ok-to-test' and 'ok-to-test' labels
+        id: label_check
+        run: |
+          SHOULD_RUN=false
+          if [[ "${{ contains(github.event.pull_request.labels.*.name, 'needs-ok-to-test') }}" == "true" ]]; then
+            echo "Label 'needs-ok-to-test' found. Skipping CI check workflow."
+          elif [[ "${{ contains(github.event.pull_request.labels.*.name, 'ok-to-test') }}" == "true" ]]; then
+            echo "Label 'ok-to-test' found. Continuing workflow."
+            SHOULD_RUN=true
+          else
+            echo "Label 'ok-to-test' not found. Skipping CI check workflow."
+          fi
+          echo "should_run=${SHOULD_RUN}" >> "$GITHUB_OUTPUT"
+
+      - name: Check if all CI checks passed
+        if: steps.label_check.outputs.should_run == 'true'
+        uses: wechuli/allcheckspassed@0b68b3b7d92e595bcbdea0c860d05605720cf479
+        with:
+          delay: '5'
+          retries: '10'
+          polling_interval: '5'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save PR payload
+        if: steps.label_check.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          mkdir -p ./pr
+          echo "${{ github.event.pull_request.number }}" > ./pr/pr_number
+          echo "${{ github.event.action }}" > ./pr/event_action
+
+      - name: Upload PR artifact
+        if: steps.label_check.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr
+          path: pr/
