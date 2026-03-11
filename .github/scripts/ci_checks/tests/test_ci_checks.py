@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
 """Unit tests for ci_checks.py script."""
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
@@ -17,6 +17,11 @@ from ..ci_checks import (
     reset_label,
     should_run_checks,
     wait_for_checks,
+)
+
+_has_gh_token = pytest.mark.skipif(
+    not os.environ.get("GITHUB_TOKEN"),
+    reason="GITHUB_TOKEN not set",
 )
 
 
@@ -86,11 +91,13 @@ class FakeGhClient(GhClient):
         self,
         labels: set[str] | None = None,
         check_runs_responses: list[dict] | None = None,
+        member: bool = True,
     ) -> None:
         """Initialize with optional label state and check run responses."""
         self.labels = labels if labels is not None else set()
         self._check_runs_responses = list(check_runs_responses or [])
         self._poll_count = 0
+        self._member = member
 
     def remove_label(self, repo: str, pr_number: int, label: str) -> None:
         """Remove a label from the tracked set."""
@@ -104,6 +111,18 @@ class FakeGhClient(GhClient):
             response = self._check_runs_responses[-1]
         self._poll_count += 1
         return response
+
+    def is_member(self, repo_owner: str, username: str) -> bool:
+        """Return the canned membership value."""
+        return self._member
+
+    def get_own_check_run_id(self, repo: str, head_sha: str, check_name: str) -> int:
+        """Return a fixed check run ID by scanning check_runs_responses."""
+        if self._check_runs_responses:
+            for cr in self._check_runs_responses[0].get("check_runs", []):
+                if cr["name"] == check_name:
+                    return cr["id"]
+        raise ChecksError(f"Check run '{check_name}' not found")
 
 
 class TestResetLabel:
@@ -307,6 +326,79 @@ class TestGhClient:
         cmd = mock_run.call_args[0][0]
         assert cmd == ["gh", "api", "repos/owner/repo/commits/abc123/check-runs"]
 
+    @patch("ci_checks.ci_checks.subprocess.run")
+    def test_is_member_returns_true_on_success(self, mock_run):
+        """is_member returns True when the API call succeeds (HTTP 204)."""
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+        client = GhClient()
+        assert client.is_member("kubeflow", "alice") is True
+        cmd = mock_run.call_args[0][0]
+        assert cmd == ["gh", "api", "orgs/kubeflow/members/alice"]
+
+    @patch("ci_checks.ci_checks.subprocess.run")
+    def test_is_member_returns_false_on_not_found(self, mock_run):
+        """is_member returns False when the API returns non-zero (non-member)."""
+        mock_run.side_effect = subprocess.CalledProcessError(1, "gh")
+        client = GhClient()
+        assert client.is_member("kubeflow", "outsider") is False
+
+    @patch("ci_checks.ci_checks.subprocess.run")
+    def test_is_member_propagates_unexpected_errors(self, mock_run):
+        """is_member propagates non-CalledProcessError exceptions (e.g. network)."""
+        mock_run.side_effect = OSError("connection refused")
+        client = GhClient()
+        with pytest.raises(OSError, match="connection refused"):
+            client.is_member("kubeflow", "alice")
+
+    @patch("ci_checks.ci_checks.subprocess.run")
+    def test_get_own_check_run_id_finds_matching_check(self, mock_run):
+        """get_own_check_run_id returns the ID of the check matching the name."""
+        response = _api_response(
+            _make_check_run(100, "lint", "completed", "success"),
+            _make_check_run(200, "check_ci_status", "in_progress"),
+        )
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout=response)
+        client = GhClient()
+        assert client.get_own_check_run_id("owner/repo", "abc123", "check_ci_status") == 200
+
+    @patch("ci_checks.ci_checks.subprocess.run")
+    def test_get_own_check_run_id_returns_first_match(self, mock_run):
+        """get_own_check_run_id returns the first matching ID when duplicates exist."""
+        response = _api_response(
+            _make_check_run(200, "check_ci_status", "completed", "success"),
+            _make_check_run(300, "check_ci_status", "in_progress"),
+        )
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout=response)
+        client = GhClient()
+        assert client.get_own_check_run_id("owner/repo", "abc123", "check_ci_status") == 200
+
+    @patch("ci_checks.ci_checks.subprocess.run")
+    def test_get_own_check_run_id_raises_when_not_found(self, mock_run):
+        """get_own_check_run_id raises ChecksError when no check matches the name."""
+        response = _api_response(
+            _make_check_run(100, "lint", "completed", "success"),
+        )
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout=response)
+        client = GhClient()
+        with pytest.raises(ChecksError):
+            client.get_own_check_run_id("owner/repo", "abc123", "check_ci_status")
+
+    @patch("ci_checks.ci_checks.subprocess.run")
+    def test_get_own_check_run_id_raises_on_empty_response(self, mock_run):
+        """get_own_check_run_id raises ChecksError when no check runs exist yet."""
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout=_api_response())
+        client = GhClient()
+        with pytest.raises(ChecksError):
+            client.get_own_check_run_id("owner/repo", "abc123", "check_ci_status")
+
+    @patch("ci_checks.ci_checks.subprocess.run")
+    def test_get_own_check_run_id_propagates_api_failure(self, mock_run):
+        """get_own_check_run_id propagates errors from the API call."""
+        mock_run.side_effect = subprocess.CalledProcessError(1, "gh")
+        client = GhClient()
+        with pytest.raises(subprocess.CalledProcessError):
+            client.get_own_check_run_id("owner/repo", "abc123", "check_ci_status")
+
 
 # ---------------------------------------------------------------------------
 # CLI integration
@@ -317,11 +409,21 @@ class TestCLIIntegration:
     """Test the main() CLI entry point."""
 
     _ALL_PASS = [
-        json.loads(_api_response(_make_check_run(100, "lint", "completed", "success"))),
+        json.loads(
+            _api_response(
+                _make_check_run(999, "check_ci_status", "in_progress"),
+                _make_check_run(100, "lint", "completed", "success"),
+            )
+        ),
     ]
 
     _CHECK_FAILURE = [
-        json.loads(_api_response(_make_check_run(100, "test", "completed", "failure"))),
+        json.loads(
+            _api_response(
+                _make_check_run(999, "check_ci_status", "in_progress"),
+                _make_check_run(100, "test", "completed", "failure"),
+            )
+        ),
     ]
 
     def test_missing_required_args_exits_with_error(self):
@@ -329,6 +431,23 @@ class TestCLIIntegration:
         with pytest.raises(SystemExit) as exc_info:
             main([])
         assert exc_info.value.code != 0
+
+    _BASE_ARGS = [
+        "--repo",
+        "owner/repo",
+        "--repo-owner",
+        "owner",
+        "--head-sha",
+        "abc123",
+        "--check-name",
+        "check_ci_status",
+        "--delay",
+        "0",
+        "--retries",
+        "1",
+        "--polling-interval",
+        "0",
+    ]
 
     @patch("ci_checks.ci_checks.GhClient")
     def test_synchronize_event_full_flow(self, mock_gh_client_cls, tmp_path):
@@ -340,25 +459,15 @@ class TestCLIIntegration:
             [
                 "--pr-number",
                 "10",
-                "--repo",
-                "owner/repo",
                 "--event-action",
                 "synchronize",
                 "--labels",
                 "ci-passed",
-                "--is-member",
-                "--check-run-id",
-                "999",
-                "--head-sha",
-                "abc123",
-                "--delay",
-                "0",
-                "--retries",
-                "1",
-                "--polling-interval",
-                "0",
+                "--pr-author",
+                "alice",
                 "--output-dir",
                 output_dir,
+                *self._BASE_ARGS,
             ]
         )
         assert result == 0
@@ -376,25 +485,15 @@ class TestCLIIntegration:
             [
                 "--pr-number",
                 "10",
-                "--repo",
-                "owner/repo",
                 "--event-action",
                 "reopened",
                 "--labels",
                 "ci-passed",
-                "--is-member",
-                "--check-run-id",
-                "999",
-                "--head-sha",
-                "abc123",
-                "--delay",
-                "0",
-                "--retries",
-                "1",
-                "--polling-interval",
-                "0",
+                "--pr-author",
+                "alice",
                 "--output-dir",
                 output_dir,
+                *self._BASE_ARGS,
             ]
         )
         assert result == 0
@@ -410,25 +509,15 @@ class TestCLIIntegration:
             [
                 "--pr-number",
                 "10",
-                "--repo",
-                "owner/repo",
                 "--event-action",
                 "opened",
                 "--labels",
                 "",
-                "--is-member",
-                "--check-run-id",
-                "999",
-                "--head-sha",
-                "abc123",
-                "--delay",
-                "0",
-                "--retries",
-                "1",
-                "--polling-interval",
-                "0",
+                "--pr-author",
+                "alice",
                 "--output-dir",
                 output_dir,
+                *self._BASE_ARGS,
             ]
         )
         assert result == 0
@@ -445,25 +534,15 @@ class TestCLIIntegration:
             [
                 "--pr-number",
                 "10",
-                "--repo",
-                "owner/repo",
                 "--event-action",
                 "labeled",
                 "--labels",
                 "",
-                "--is-member",
-                "--check-run-id",
-                "999",
-                "--head-sha",
-                "abc123",
-                "--delay",
-                "0",
-                "--retries",
-                "1",
-                "--polling-interval",
-                "0",
+                "--pr-author",
+                "alice",
                 "--output-dir",
                 output_dir,
+                *self._BASE_ARGS,
             ]
         )
         assert result == 0
@@ -473,31 +552,22 @@ class TestCLIIntegration:
     @patch("ci_checks.ci_checks.GhClient")
     def test_non_member_unapproved_synchronize_resets_label_but_skips_checks(self, mock_gh_client_cls, tmp_path):
         """Non-member PR (synchronize): ci-passed removed, but no payload saved."""
-        fake = FakeGhClient(labels={"ci-passed"})
+        fake = FakeGhClient(labels={"ci-passed"}, member=False)
         mock_gh_client_cls.return_value = fake
         output_dir = str(tmp_path / "pr")
         result = main(
             [
                 "--pr-number",
                 "10",
-                "--repo",
-                "owner/repo",
                 "--event-action",
                 "synchronize",
                 "--labels",
                 "needs-ok-to-test,ci-passed",
-                "--check-run-id",
-                "999",
-                "--head-sha",
-                "abc123",
-                "--delay",
-                "0",
-                "--retries",
-                "1",
-                "--polling-interval",
-                "0",
+                "--pr-author",
+                "outsider",
                 "--output-dir",
                 output_dir,
+                *self._BASE_ARGS,
             ]
         )
         assert result == 0
@@ -507,31 +577,22 @@ class TestCLIIntegration:
     @patch("ci_checks.ci_checks.GhClient")
     def test_non_member_unapproved_opened_skips_everything(self, mock_gh_client_cls, tmp_path):
         """Non-member PR (opened): labels untouched, no payload saved."""
-        fake = FakeGhClient(labels={"ci-passed"})
+        fake = FakeGhClient(labels={"ci-passed"}, member=False)
         mock_gh_client_cls.return_value = fake
         output_dir = str(tmp_path / "pr")
         result = main(
             [
                 "--pr-number",
                 "10",
-                "--repo",
-                "owner/repo",
                 "--event-action",
                 "opened",
                 "--labels",
                 "needs-ok-to-test",
-                "--check-run-id",
-                "999",
-                "--head-sha",
-                "abc123",
-                "--delay",
-                "0",
-                "--retries",
-                "1",
-                "--polling-interval",
-                "0",
+                "--pr-author",
+                "outsider",
                 "--output-dir",
                 output_dir,
+                *self._BASE_ARGS,
             ]
         )
         assert result == 0
@@ -539,33 +600,48 @@ class TestCLIIntegration:
         assert not Path(output_dir).exists()
 
     @patch("ci_checks.ci_checks.GhClient")
-    def test_non_member_approved_runs_checks_and_saves_payload(self, mock_gh_client_cls, tmp_path):
-        """Non-member PR approved (ok-to-test): checks run, payload saved."""
-        fake = FakeGhClient(check_runs_responses=self._ALL_PASS)
+    def test_non_member_no_labels_skips_checks(self, mock_gh_client_cls, tmp_path):
+        """Non-member PR with no labels at all -- CI should NOT run (strict)."""
+        fake = FakeGhClient(member=False)
         mock_gh_client_cls.return_value = fake
         output_dir = str(tmp_path / "pr")
         result = main(
             [
                 "--pr-number",
                 "10",
-                "--repo",
-                "owner/repo",
+                "--event-action",
+                "opened",
+                "--labels",
+                "",
+                "--pr-author",
+                "outsider",
+                "--output-dir",
+                output_dir,
+                *self._BASE_ARGS,
+            ]
+        )
+        assert result == 0
+        assert not Path(output_dir).exists()
+
+    @patch("ci_checks.ci_checks.GhClient")
+    def test_non_member_approved_runs_checks_and_saves_payload(self, mock_gh_client_cls, tmp_path):
+        """Non-member PR approved (ok-to-test): checks run, payload saved."""
+        fake = FakeGhClient(check_runs_responses=self._ALL_PASS, member=False)
+        mock_gh_client_cls.return_value = fake
+        output_dir = str(tmp_path / "pr")
+        result = main(
+            [
+                "--pr-number",
+                "10",
                 "--event-action",
                 "labeled",
                 "--labels",
                 "ok-to-test",
-                "--check-run-id",
-                "999",
-                "--head-sha",
-                "abc123",
-                "--delay",
-                "0",
-                "--retries",
-                "1",
-                "--polling-interval",
-                "0",
+                "--pr-author",
+                "outsider",
                 "--output-dir",
                 output_dir,
+                *self._BASE_ARGS,
             ]
         )
         assert result == 0
@@ -581,26 +657,51 @@ class TestCLIIntegration:
             [
                 "--pr-number",
                 "10",
-                "--repo",
-                "owner/repo",
                 "--event-action",
                 "opened",
                 "--labels",
                 "",
-                "--is-member",
-                "--check-run-id",
-                "999",
-                "--head-sha",
-                "abc123",
-                "--delay",
-                "0",
-                "--retries",
-                "1",
-                "--polling-interval",
-                "0",
+                "--pr-author",
+                "alice",
                 "--output-dir",
                 output_dir,
+                *self._BASE_ARGS,
             ]
         )
         assert result != 0
         assert not Path(output_dir).exists()
+
+
+# ---------------------------------------------------------------------------
+# Smoke tests (require GITHUB_TOKEN)
+# ---------------------------------------------------------------------------
+
+
+class TestSmoke:
+    """Smoke tests that call the real gh CLI against the GitHub API."""
+
+    _REPO = "kubeflow/pipelines-components"
+    _REPO_OWNER = "kubeflow"
+    _KNOWN_SHA = "9fa67b2febaf41e17e631f72e7e8376044b52e32"
+
+    @_has_gh_token
+    def test_is_member_returns_bool(self):
+        """is_member returns a bool for a known user without errors."""
+        gh = GhClient()
+        result = gh.is_member(self._REPO_OWNER, "ghost")
+        assert result is False
+
+    @_has_gh_token
+    def test_get_check_runs_returns_check_runs_key(self):
+        """get_check_runs returns a dict with a 'check_runs' list."""
+        gh = GhClient()
+        data = gh.get_check_runs(self._REPO, self._KNOWN_SHA)
+        assert "check_runs" in data
+        assert isinstance(data["check_runs"], list)
+
+    @_has_gh_token
+    def test_get_own_check_run_id_raises_for_nonexistent_name(self):
+        """get_own_check_run_id raises ChecksError for a name that doesn't exist."""
+        gh = GhClient()
+        with pytest.raises(ChecksError):
+            gh.get_own_check_run_id(self._REPO, self._KNOWN_SHA, "nonexistent_check")

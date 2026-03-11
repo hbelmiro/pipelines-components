@@ -36,6 +36,26 @@ class GhClient:
         )
         return json.loads(result.stdout)
 
+    def is_member(self, repo_owner: str, username: str) -> bool:
+        """Check whether *username* belongs to the *repo_owner* org."""
+        try:
+            subprocess.run(
+                ["gh", "api", f"orgs/{repo_owner}/members/{username}"],
+                capture_output=True,
+                check=True,
+            )
+            return True
+        except subprocess.CalledProcessError:
+            return False
+
+    def get_own_check_run_id(self, repo: str, head_sha: str, check_name: str) -> int:
+        """Return the ID of the check run matching *check_name*."""
+        data = self.get_check_runs(repo, head_sha)
+        for cr in data.get("check_runs", []):
+            if cr["name"] == check_name:
+                return cr["id"]
+        raise ChecksError(f"Check run '{check_name}' not found")
+
 
 def should_run_checks(labels: list[str], *, is_member: bool) -> bool:
     """Determine whether CI checks should run based on membership and PR labels."""
@@ -104,11 +124,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="CI check orchestration for pull requests.")
     parser.add_argument("--pr-number", type=int, required=True)
     parser.add_argument("--repo", required=True)
+    parser.add_argument("--repo-owner", required=True)
     parser.add_argument("--event-action", required=True)
     parser.add_argument("--labels", required=True, help="Comma-separated list of PR labels")
-    parser.add_argument("--is-member", action="store_true", default=False)
-    parser.add_argument("--check-run-id", type=int, required=True)
+    parser.add_argument("--pr-author", required=True)
     parser.add_argument("--head-sha", required=True)
+    parser.add_argument("--check-name", required=True)
     parser.add_argument("--delay", type=int, required=True, help="Seconds to wait before first poll")
     parser.add_argument("--retries", type=int, required=True)
     parser.add_argument("--polling-interval", type=int, required=True, help="Seconds between polls")
@@ -125,16 +146,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.event_action in ("synchronize", "reopened"):
         reset_label(gh, args.repo, args.pr_number, labels)
 
-    if not should_run_checks(labels, is_member=args.is_member):
+    member = gh.is_member(args.repo_owner, args.pr_author)
+    if not should_run_checks(labels, is_member=member):
         print("PR requires '/ok-to-test' approval. Skipping CI checks.")
         return 0
+
+    check_run_id = gh.get_own_check_run_id(args.repo, args.head_sha, args.check_name)
 
     try:
         wait_for_checks(
             gh,
             args.repo,
             args.head_sha,
-            check_run_id=args.check_run_id,
+            check_run_id=check_run_id,
             delay=args.delay,
             retries=args.retries,
             interval=args.polling_interval,
