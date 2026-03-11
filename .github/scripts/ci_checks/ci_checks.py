@@ -1,10 +1,15 @@
-#!/usr/bin/env python3
-"""CI checks script - stub for TDD (not yet implemented)."""
+"""CI checks: reset labels, gate on membership/labels, poll check runs, save PR payload."""
 
 from __future__ import annotations
 
-import subprocess  # noqa: F401 - needed as patch target for tests
-import time  # noqa: F401 - needed as patch target for tests
+import argparse
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+_PASSING_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 
 
 class ChecksError(Exception):
@@ -15,22 +20,34 @@ class GhClient:
     """Wraps subprocess calls to the gh CLI."""
 
     def remove_label(self, repo: str, pr_number: int, label: str) -> None:
-        """Remove a label from a PR."""
-        raise NotImplementedError
+        """Remove a label from a PR via ``gh pr edit``."""
+        subprocess.run(
+            ["gh", "pr", "edit", str(pr_number), "--remove-label", label, "--repo", repo],
+            check=True,
+        )
 
     def get_check_runs(self, repo: str, head_sha: str) -> dict:
-        """Get check runs for a commit."""
-        raise NotImplementedError
+        """Return parsed JSON from the GitHub check-runs API."""
+        result = subprocess.run(
+            ["gh", "api", f"repos/{repo}/commits/{head_sha}/check-runs"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(result.stdout)
 
 
 def should_run_checks(labels: list[str], *, is_member: bool) -> bool:
     """Determine whether CI checks should run based on membership and PR labels."""
-    raise NotImplementedError
+    if is_member:
+        return True
+    return "ok-to-test" in labels
 
 
-def reset_label(gh: GhClient, repo: str, pr_number: int) -> None:
-    """Remove the ci-passed label from a PR."""
-    raise NotImplementedError
+def reset_label(gh: GhClient, repo: str, pr_number: int, labels: list[str]) -> None:
+    """Remove the ci-passed label from a PR if it is present."""
+    if "ci-passed" in labels:
+        gh.remove_label(repo, pr_number, "ci-passed")
 
 
 def wait_for_checks(
@@ -44,14 +61,91 @@ def wait_for_checks(
     interval: int,
 ) -> None:
     """Poll check runs until all pass or retries are exhausted."""
-    raise NotImplementedError
+    if delay > 0:
+        time.sleep(delay)
+
+    for attempt in range(retries):
+        if attempt > 0:
+            time.sleep(interval)
+
+        data = gh.get_check_runs(repo, head_sha)
+        all_runs = data.get("check_runs", [])
+        check_runs = [cr for cr in all_runs if cr["id"] != check_run_id]
+
+        if not check_runs:
+            if all_runs:
+                return
+            continue
+
+        pending = [cr for cr in check_runs if cr["status"] != "completed"]
+        if pending:
+            continue
+
+        failed = [cr for cr in check_runs if cr.get("conclusion") not in _PASSING_CONCLUSIONS]
+        if failed:
+            names = ", ".join(cr["name"] for cr in failed)
+            raise ChecksError(f"Check(s) failed: {names}")
+
+        return
+
+    raise ChecksError("Checks did not complete within the retry limit")
 
 
 def save_pr_payload(output_dir: str, pr_number: int, event_action: str) -> None:
     """Save PR number and event action to files."""
-    raise NotImplementedError
+    path = Path(output_dir)
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "pr_number").write_text(f"{pr_number}\n")
+    (path / "event_action").write_text(f"{event_action}\n")
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="CI check orchestration for pull requests.")
+    parser.add_argument("--pr-number", type=int, required=True)
+    parser.add_argument("--repo", required=True)
+    parser.add_argument("--event-action", required=True)
+    parser.add_argument("--labels", required=True, help="Comma-separated list of PR labels")
+    parser.add_argument("--is-member", action="store_true", default=False)
+    parser.add_argument("--check-run-id", type=int, required=True)
+    parser.add_argument("--head-sha", required=True)
+    parser.add_argument("--delay", type=int, required=True, help="Seconds to wait before first poll")
+    parser.add_argument("--retries", type=int, required=True)
+    parser.add_argument("--polling-interval", type=int, required=True, help="Seconds between polls")
+    parser.add_argument("--output-dir", required=True)
+    return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
-    raise NotImplementedError
+    args = parse_args(argv)
+    labels = [label for label in args.labels.split(",") if label]
+    gh = GhClient()
+
+    if args.event_action in ("synchronize", "reopened"):
+        reset_label(gh, args.repo, args.pr_number, labels)
+
+    if not should_run_checks(labels, is_member=args.is_member):
+        print("PR requires '/ok-to-test' approval. Skipping CI checks.")
+        return 0
+
+    try:
+        wait_for_checks(
+            gh,
+            args.repo,
+            args.head_sha,
+            check_run_id=args.check_run_id,
+            delay=args.delay,
+            retries=args.retries,
+            interval=args.polling_interval,
+        )
+    except ChecksError as exc:
+        print(f"CI checks failed: {exc}", file=sys.stderr)
+        return 1
+
+    save_pr_payload(args.output_dir, args.pr_number, args.event_action)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

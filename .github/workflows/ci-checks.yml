@@ -14,49 +14,66 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - name: Reset 'ci-passed' label on PR updates
-        if: github.event.action == 'synchronize' || github.event.action == 'reopened'
-        run: |
-          echo "Removing stale 'ci-passed' label for event: ${{ github.event.action }}"
-          gh pr edit "${{ github.event.pull_request.number }}" \
-            --remove-label "ci-passed" \
-            --repo "$GITHUB_REPOSITORY" || echo "Label not present"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Check for 'needs-ok-to-test' and 'ok-to-test' labels
-        id: label_check
-        run: |
-          SHOULD_RUN=true
-          if [[ "${{ contains(github.event.pull_request.labels.*.name, 'needs-ok-to-test') }}" == "true" && \
-            "${{ contains(github.event.pull_request.labels.*.name, 'ok-to-test') }}" != "true" ]]; then
-            echo "PR still requires '/ok-to-test'. Skipping CI check workflow."
-            SHOULD_RUN=false
-          else
-            echo "PR is allowed to run CI check workflow."
-          fi
-          echo "should_run=${SHOULD_RUN}" >> "$GITHUB_OUTPUT"
-
-      - name: Check if all CI checks passed
-        if: steps.label_check.outputs.should_run == 'true'
-        uses: wechuli/allcheckspassed@0b68b3b7d92e595bcbdea0c860d05605720cf479
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          delay: '5'
-          retries: '10'
-          polling_interval: '5'
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Python
+        uses: ./.github/actions/setup-python-ci
+        with:
+          python-version: "3.14"
+
+      - name: Check org membership
+        id: membership
+        run: |
+          if gh api "orgs/${GITHUB_REPOSITORY_OWNER}/members/${{ github.event.pull_request.user.login }}" \
+            --silent 2>/dev/null; then
+            echo "is_member=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_member=false" >> "$GITHUB_OUTPUT"
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Save PR payload
-        if: steps.label_check.outputs.should_run == 'true'
-        shell: bash
+      - name: Get current check run ID
+        id: check_run
         run: |
-          mkdir -p ./pr
-          echo "${{ github.event.pull_request.number }}" > ./pr/pr_number
-          echo "${{ github.event.action }}" > ./pr/event_action
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          ENDPOINT="repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs"
+          JQ_FILTER='.check_runs[] | select(.name == "check_ci_status") | .id'
+          CHECK_RUN_ID=$(gh api "${ENDPOINT}" --jq "${JQ_FILTER}" | head -1)
+          echo "id=${CHECK_RUN_ID:-0}" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run CI checks
+        id: ci_checks
+        run: |
+          LABELS="${{ join(github.event.pull_request.labels.*.name, ',') }}"
+
+          MEMBER_FLAG=""
+          if [[ "${{ steps.membership.outputs.is_member }}" == "true" ]]; then
+            MEMBER_FLAG="--is-member"
+          fi
+
+          uv run python3 .github/scripts/ci_checks/ci_checks.py \
+            --pr-number "${{ github.event.pull_request.number }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --event-action "${{ github.event.action }}" \
+            --labels "${LABELS}" \
+            ${MEMBER_FLAG} \
+            --check-run-id "${{ steps.check_run.outputs.id }}" \
+            --head-sha "${{ github.event.pull_request.head.sha }}" \
+            --delay 5 \
+            --retries 10 \
+            --polling-interval 5 \
+            --output-dir ./pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload PR artifact
-        if: steps.label_check.outputs.should_run == 'true'
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: pr

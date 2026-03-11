@@ -54,8 +54,24 @@ class TestShouldRunChecks:
         assert should_run_checks(["ok-to-test"], is_member=False) is True
 
     def test_non_member_pr_no_trust_labels(self):
-        """Non-member PR with no trust labels -- CI should run."""
-        assert should_run_checks([], is_member=False) is True
+        """Non-member PR with no trust labels -- CI should NOT run (strict)."""
+        assert should_run_checks([], is_member=False) is False
+
+    def test_non_member_pr_unrelated_labels_only(self):
+        """Non-member PR with only unrelated labels -- CI should NOT run."""
+        assert should_run_checks(["bug", "enhancement"], is_member=False) is False
+
+    def test_member_pr_with_needs_ok_to_test(self):
+        """Member PR with needs-ok-to-test (shouldn't happen) -- CI should still run."""
+        assert should_run_checks(["needs-ok-to-test"], is_member=True) is True
+
+    def test_member_pr_with_ok_to_test(self):
+        """Member PR with ok-to-test (shouldn't happen) -- CI should still run."""
+        assert should_run_checks(["ok-to-test"], is_member=True) is True
+
+    def test_member_pr_with_unrelated_labels(self):
+        """Member PR with only unrelated labels -- CI should still run."""
+        assert should_run_checks(["bug", "enhancement"], is_member=True) is True
 
 
 # ---------------------------------------------------------------------------
@@ -77,9 +93,7 @@ class FakeGhClient(GhClient):
         self._poll_count = 0
 
     def remove_label(self, repo: str, pr_number: int, label: str) -> None:
-        """Remove a label, raising CalledProcessError if not present."""
-        if label not in self.labels:
-            raise subprocess.CalledProcessError(1, "gh")
+        """Remove a label from the tracked set."""
         self.labels.discard(label)
 
     def get_check_runs(self, repo: str, head_sha: str) -> dict:
@@ -98,22 +112,22 @@ class TestResetLabel:
     def test_removes_ci_passed_label(self):
         """PR has ci-passed label -- it gets removed."""
         gh = FakeGhClient(labels={"ci-passed", "bug"})
-        reset_label(gh, "kubeflow/pipelines-components", 42)
+        reset_label(gh, "kubeflow/pipelines-components", 42, ["ci-passed", "bug"])
         assert "ci-passed" not in gh.labels
         assert "bug" in gh.labels
 
-    def test_label_not_present_handles_gracefully(self):
-        """PR does not have ci-passed label -- no error raised."""
-        gh = FakeGhClient(labels={"bug"})
-        reset_label(gh, "kubeflow/pipelines-components", 42)
-        assert gh.labels == {"bug"}
+    def test_label_not_present_skips_removal(self):
+        """PR does not have ci-passed label -- remove_label is not called."""
+        gh = MagicMock(spec=GhClient)
+        reset_label(gh, "kubeflow/pipelines-components", 42, ["bug"])
+        gh.remove_label.assert_not_called()
 
     def test_api_unreachable_propagates_error(self):
         """Network/auth errors should propagate to the caller."""
         gh = MagicMock(spec=GhClient)
         gh.remove_label.side_effect = RuntimeError("connection refused")
         with pytest.raises(RuntimeError, match="connection refused"):
-            reset_label(gh, "kubeflow/pipelines-components", 42)
+            reset_label(gh, "kubeflow/pipelines-components", 42, ["ci-passed"])
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +345,7 @@ class TestCLIIntegration:
                 "--event-action",
                 "synchronize",
                 "--labels",
-                "",
+                "ci-passed",
                 "--is-member",
                 "--check-run-id",
                 "999",
@@ -367,7 +381,7 @@ class TestCLIIntegration:
                 "--event-action",
                 "reopened",
                 "--labels",
-                "",
+                "ci-passed",
                 "--is-member",
                 "--check-run-id",
                 "999",
@@ -471,7 +485,7 @@ class TestCLIIntegration:
                 "--event-action",
                 "synchronize",
                 "--labels",
-                "needs-ok-to-test",
+                "needs-ok-to-test,ci-passed",
                 "--check-run-id",
                 "999",
                 "--head-sha",
@@ -523,6 +537,39 @@ class TestCLIIntegration:
         assert result == 0
         assert "ci-passed" in fake.labels
         assert not Path(output_dir).exists()
+
+    @patch("ci_checks.ci_checks.GhClient")
+    def test_non_member_approved_runs_checks_and_saves_payload(self, mock_gh_client_cls, tmp_path):
+        """Non-member PR approved (ok-to-test): checks run, payload saved."""
+        fake = FakeGhClient(check_runs_responses=self._ALL_PASS)
+        mock_gh_client_cls.return_value = fake
+        output_dir = str(tmp_path / "pr")
+        result = main(
+            [
+                "--pr-number",
+                "10",
+                "--repo",
+                "owner/repo",
+                "--event-action",
+                "labeled",
+                "--labels",
+                "ok-to-test",
+                "--check-run-id",
+                "999",
+                "--head-sha",
+                "abc123",
+                "--delay",
+                "0",
+                "--retries",
+                "1",
+                "--polling-interval",
+                "0",
+                "--output-dir",
+                output_dir,
+            ]
+        )
+        assert result == 0
+        assert Path(output_dir, "pr_number").read_text().strip() == "10"
 
     @patch("ci_checks.ci_checks.GhClient")
     def test_wait_for_checks_failure_prevents_payload_save(self, mock_gh_client_cls, tmp_path):
