@@ -87,15 +87,16 @@ jobs:
     steps:
       - name: Check and reset label
         run: |
-          EVENT_ACTION="${{ needs.fetch_data.outputs.event_action }}"
           if [[ "$EVENT_ACTION" == "synchronize" || "$EVENT_ACTION" == "reopened" ]]; then
-            echo "Resetting 'ci-passed' label (event: ${{ needs.fetch_data.outputs.event_action }})."
-            gh pr edit "${{ needs.fetch_data.outputs.pr_number }}" \
+            echo "Resetting 'ci-passed' label (event: $EVENT_ACTION)."
+            gh pr edit "$PR_NUMBER" \
               --remove-label "ci-passed" \
               --repo "$GITHUB_REPOSITORY" || echo "Label not present"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_ACTION: ${{ needs.fetch_data.outputs.event_action }}
+          PR_NUMBER: ${{ needs.fetch_data.outputs.pr_number }}
 
   add_ci_passed_label:
     name: Add 'ci-passed' label
@@ -116,9 +117,10 @@ jobs:
 
       - name: Add 'ci-passed' label
         run: |
-          echo "Adding 'ci-passed' label to PR #${{ needs.fetch_data.outputs.pr_number }}"
-          gh pr edit "${{ needs.fetch_data.outputs.pr_number }}" \
+          echo "Adding 'ci-passed' label to PR #$PR_NUMBER"
+          gh pr edit "$PR_NUMBER" \
             --add-label "ci-passed" \
             --repo "$GITHUB_REPOSITORY"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ needs.fetch_data.outputs.pr_number }}
