@@ -19,10 +19,15 @@ from ..ci_checks import (
     wait_for_checks,
 )
 
-_has_gh_token = pytest.mark.skipif(
+_skip_without_token = pytest.mark.skipif(
     not os.environ.get("GITHUB_TOKEN"),
     reason="GITHUB_TOKEN not set",
 )
+
+
+def gh_api(func):
+    """Mark as a live GitHub API test; skipped without GITHUB_TOKEN."""
+    return pytest.mark.gh_api(_skip_without_token(func))
 
 
 def _make_check_run(check_id: int, name: str, status: str, conclusion: str | None = None) -> dict:
@@ -684,14 +689,14 @@ class TestSmoke:
     _REPO_OWNER = "kubeflow"
     _KNOWN_SHA = "9fa67b2febaf41e17e631f72e7e8376044b52e32"
 
-    @_has_gh_token
+    @gh_api
     def test_is_member_returns_bool(self):
         """is_member returns a bool for a known user without errors."""
         gh = GhClient()
         result = gh.is_member(self._REPO_OWNER, "ghost")
         assert result is False
 
-    @_has_gh_token
+    @gh_api
     def test_get_check_runs_returns_check_runs_key(self):
         """get_check_runs returns a dict with a 'check_runs' list."""
         gh = GhClient()
@@ -699,7 +704,7 @@ class TestSmoke:
         assert "check_runs" in data
         assert isinstance(data["check_runs"], list)
 
-    @_has_gh_token
+    @gh_api
     def test_get_own_check_run_id_raises_for_nonexistent_name(self):
         """get_own_check_run_id raises ChecksError for a name that doesn't exist."""
         gh = GhClient()
