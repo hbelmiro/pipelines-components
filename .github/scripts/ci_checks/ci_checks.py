@@ -1,4 +1,4 @@
-"""CI checks: reset labels, gate on membership/labels, poll check runs, save PR payload."""
+"""CI checks: reset labels, gate on author association/labels, poll check runs, save PR payload."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 _PASSING_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
+_TRUSTED_ASSOCIATIONS = frozenset({"MEMBER", "OWNER", "COLLABORATOR"})
 
 
 class ChecksError(Exception):
@@ -39,18 +40,6 @@ class GhClient:
         )
         return json.loads(result.stdout)
 
-    def is_member(self, repo_owner: str, username: str) -> bool:
-        """Check whether *username* belongs to the *repo_owner* org."""
-        try:
-            subprocess.run(
-                ["gh", "api", f"orgs/{repo_owner}/members/{username}"],
-                capture_output=True,
-                check=True,
-            )
-            return True
-        except subprocess.CalledProcessError:
-            return False
-
     def get_own_check_run_id(self, repo: str, head_sha: str, check_name: str) -> int:
         """Return the ID of the check run matching *check_name*."""
         data = self.get_check_runs(repo, head_sha)
@@ -60,9 +49,14 @@ class GhClient:
         raise ChecksError(f"Check run '{check_name}' not found")
 
 
-def should_run_checks(labels: list[str], is_member: bool) -> bool:
-    """Determine whether CI checks should run based on membership and PR labels."""
-    if is_member:
+def is_trusted_association(author_association: str) -> bool:
+    """Return True if *author_association* represents a trusted contributor."""
+    return author_association in _TRUSTED_ASSOCIATIONS
+
+
+def should_run_checks(labels: list[str], *, author_association: str) -> bool:
+    """Determine whether CI checks should run based on author association and PR labels."""
+    if is_trusted_association(author_association):
         return True
     return "ok-to-test" in labels
 
@@ -134,10 +128,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="CI check orchestration for pull requests.")
     parser.add_argument("--pr-number", type=int, required=True)
     parser.add_argument("--repo", required=True)
-    parser.add_argument("--repo-owner", required=True)
     parser.add_argument("--event-action", required=True)
     parser.add_argument("--labels", required=True, help="Comma-separated list of PR labels")
-    parser.add_argument("--pr-author", required=True)
+    parser.add_argument("--author-association", required=True, help="GitHub author_association value")
     parser.add_argument("--head-sha", required=True)
     parser.add_argument("--check-name", required=True)
     parser.add_argument("--delay", type=int, required=True, help="Seconds to wait before first poll")
@@ -157,8 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.event_action in ("synchronize", "reopened"):
         reset_label(gh, args.repo, args.pr_number, labels)
 
-    member = gh.is_member(args.repo_owner, args.pr_author)
-    if not should_run_checks(labels, is_member=member):
+    if not should_run_checks(labels, author_association=args.author_association):
         logger.info("PR requires '/ok-to-test' approval. Skipping CI checks.")
         return 0
 

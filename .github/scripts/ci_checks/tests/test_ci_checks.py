@@ -13,6 +13,7 @@ import pytest
 from ..ci_checks import (
     ChecksError,
     GhClient,
+    is_trusted_association,
     main,
     reset_label,
     should_run_checks,
@@ -50,13 +51,11 @@ class FakeGhClient(GhClient):
         self,
         labels: set[str] | None = None,
         check_runs_responses: list[dict] | None = None,
-        member: bool = True,
     ) -> None:
         """Initialize with optional label state and check run responses."""
         self.labels = labels if labels is not None else set()
         self._check_runs_responses = list(check_runs_responses or [])
         self._poll_count = 0
-        self._member = member
 
     def remove_label(self, repo: str, pr_number: int, label: str) -> None:
         """Remove a label from the tracked set."""
@@ -70,10 +69,6 @@ class FakeGhClient(GhClient):
             response = self._check_runs_responses[-1]
         self._poll_count += 1
         return response
-
-    def is_member(self, repo_owner: str, username: str) -> bool:
-        """Return the canned membership value."""
-        return self._member
 
     def get_own_check_run_id(self, repo: str, head_sha: str, check_name: str) -> int:
         """Return a fixed check run ID by scanning check_runs_responses."""
@@ -89,40 +84,62 @@ class FakeGhClient(GhClient):
 # ---------------------------------------------------------------------------
 
 
+class TestIsTrustedAssociation:
+    """Test the is_trusted_association helper."""
+
+    @pytest.mark.parametrize("assoc", ["MEMBER", "OWNER", "COLLABORATOR"])
+    def test_trusted_associations(self, assoc):
+        """Known trusted associations return True."""
+        assert is_trusted_association(assoc) is True
+
+    @pytest.mark.parametrize("assoc", ["CONTRIBUTOR", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "NONE", ""])
+    def test_untrusted_associations(self, assoc):
+        """Non-trusted associations return False."""
+        assert is_trusted_association(assoc) is False
+
+
 class TestShouldRunChecks:
-    """Test the should_run_checks function (pure membership + label logic)."""
+    """Test the should_run_checks function (author association + label logic)."""
 
     def test_member_pr(self):
         """Member PR -- CI should always run."""
-        assert should_run_checks([], is_member=True) is True
+        assert should_run_checks([], author_association="MEMBER") is True
+
+    def test_owner_pr(self):
+        """Owner PR -- CI should always run."""
+        assert should_run_checks([], author_association="OWNER") is True
+
+    def test_collaborator_pr(self):
+        """Collaborator PR -- CI should always run."""
+        assert should_run_checks([], author_association="COLLABORATOR") is True
 
     def test_non_member_pr_not_yet_approved(self):
         """Non-member PR awaiting approval (needs-ok-to-test) -- CI should NOT run."""
-        assert should_run_checks(["needs-ok-to-test"], is_member=False) is False
+        assert should_run_checks(["needs-ok-to-test"], author_association="NONE") is False
 
     def test_non_member_pr_approved_by_maintainer(self):
-        """Non-member PR approved (needs-ok-to-test removed, ok-to-test added) -- CI should run."""
-        assert should_run_checks(["ok-to-test"], is_member=False) is True
+        """Non-member PR approved (ok-to-test added) -- CI should run."""
+        assert should_run_checks(["ok-to-test"], author_association="NONE") is True
 
     def test_non_member_pr_no_trust_labels(self):
         """Non-member PR with no trust labels -- CI should NOT run (strict)."""
-        assert should_run_checks([], is_member=False) is False
+        assert should_run_checks([], author_association="NONE") is False
 
     def test_non_member_pr_unrelated_labels_only(self):
         """Non-member PR with only unrelated labels -- CI should NOT run."""
-        assert should_run_checks(["bug", "enhancement"], is_member=False) is False
+        assert should_run_checks(["bug", "enhancement"], author_association="CONTRIBUTOR") is False
 
     def test_member_pr_with_needs_ok_to_test(self):
         """Member PR with needs-ok-to-test (shouldn't happen) -- CI should still run."""
-        assert should_run_checks(["needs-ok-to-test"], is_member=True) is True
+        assert should_run_checks(["needs-ok-to-test"], author_association="MEMBER") is True
 
     def test_member_pr_with_ok_to_test(self):
         """Member PR with ok-to-test (shouldn't happen) -- CI should still run."""
-        assert should_run_checks(["ok-to-test"], is_member=True) is True
+        assert should_run_checks(["ok-to-test"], author_association="MEMBER") is True
 
     def test_member_pr_with_unrelated_labels(self):
         """Member PR with only unrelated labels -- CI should still run."""
-        assert should_run_checks(["bug", "enhancement"], is_member=True) is True
+        assert should_run_checks(["bug", "enhancement"], author_association="MEMBER") is True
 
 
 # ---------------------------------------------------------------------------
@@ -348,30 +365,6 @@ class TestGhClient:
         assert cmd == ["gh", "api", "--paginate", "repos/owner/repo/commits/abc123/check-runs"]
 
     @patch("ci_checks.ci_checks.subprocess.run")
-    def test_is_member_returns_true_on_success(self, mock_run):
-        """is_member returns True when the API call succeeds (HTTP 204)."""
-        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
-        client = GhClient()
-        assert client.is_member("kubeflow", "alice") is True
-        cmd = mock_run.call_args[0][0]
-        assert cmd == ["gh", "api", "orgs/kubeflow/members/alice"]
-
-    @patch("ci_checks.ci_checks.subprocess.run")
-    def test_is_member_returns_false_on_not_found(self, mock_run):
-        """is_member returns False when the API returns non-zero (non-member)."""
-        mock_run.side_effect = subprocess.CalledProcessError(1, "gh")
-        client = GhClient()
-        assert client.is_member("kubeflow", "outsider") is False
-
-    @patch("ci_checks.ci_checks.subprocess.run")
-    def test_is_member_propagates_unexpected_errors(self, mock_run):
-        """is_member propagates non-CalledProcessError exceptions (e.g. network)."""
-        mock_run.side_effect = OSError("connection refused")
-        client = GhClient()
-        with pytest.raises(OSError, match="connection refused"):
-            client.is_member("kubeflow", "alice")
-
-    @patch("ci_checks.ci_checks.subprocess.run")
     def test_get_own_check_run_id_finds_matching_check(self, mock_run):
         """get_own_check_run_id returns the ID of the check matching the name."""
         response = _api_response(
@@ -456,8 +449,6 @@ class TestCLIIntegration:
     _BASE_ARGS = [
         "--repo",
         "owner/repo",
-        "--repo-owner",
-        "owner",
         "--head-sha",
         "abc123",
         "--check-name",
@@ -484,8 +475,8 @@ class TestCLIIntegration:
                 "synchronize",
                 "--labels",
                 "ci-passed",
-                "--pr-author",
-                "alice",
+                "--author-association",
+                "MEMBER",
                 "--output-dir",
                 output_dir,
                 *self._BASE_ARGS,
@@ -510,8 +501,8 @@ class TestCLIIntegration:
                 "reopened",
                 "--labels",
                 "ci-passed",
-                "--pr-author",
-                "alice",
+                "--author-association",
+                "MEMBER",
                 "--output-dir",
                 output_dir,
                 *self._BASE_ARGS,
@@ -534,8 +525,8 @@ class TestCLIIntegration:
                 "opened",
                 "--labels",
                 "",
-                "--pr-author",
-                "alice",
+                "--author-association",
+                "MEMBER",
                 "--output-dir",
                 output_dir,
                 *self._BASE_ARGS,
@@ -559,8 +550,8 @@ class TestCLIIntegration:
                 "labeled",
                 "--labels",
                 "",
-                "--pr-author",
-                "alice",
+                "--author-association",
+                "MEMBER",
                 "--output-dir",
                 output_dir,
                 *self._BASE_ARGS,
@@ -573,7 +564,7 @@ class TestCLIIntegration:
     @patch("ci_checks.ci_checks.GhClient")
     def test_non_member_unapproved_synchronize_resets_label_but_skips_checks(self, mock_gh_client_cls, tmp_path):
         """Non-member PR (synchronize): ci-passed removed, but no payload saved."""
-        fake = FakeGhClient(labels={"ci-passed"}, member=False)
+        fake = FakeGhClient(labels={"ci-passed"})
         mock_gh_client_cls.return_value = fake
         output_dir = str(tmp_path / "pr")
         result = main(
@@ -584,8 +575,8 @@ class TestCLIIntegration:
                 "synchronize",
                 "--labels",
                 "needs-ok-to-test,ci-passed",
-                "--pr-author",
-                "outsider",
+                "--author-association",
+                "NONE",
                 "--output-dir",
                 output_dir,
                 *self._BASE_ARGS,
@@ -598,7 +589,7 @@ class TestCLIIntegration:
     @patch("ci_checks.ci_checks.GhClient")
     def test_non_member_unapproved_opened_skips_everything(self, mock_gh_client_cls, tmp_path):
         """Non-member PR (opened): labels untouched, no payload saved."""
-        fake = FakeGhClient(labels={"ci-passed"}, member=False)
+        fake = FakeGhClient(labels={"ci-passed"})
         mock_gh_client_cls.return_value = fake
         output_dir = str(tmp_path / "pr")
         result = main(
@@ -609,8 +600,8 @@ class TestCLIIntegration:
                 "opened",
                 "--labels",
                 "needs-ok-to-test",
-                "--pr-author",
-                "outsider",
+                "--author-association",
+                "NONE",
                 "--output-dir",
                 output_dir,
                 *self._BASE_ARGS,
@@ -623,7 +614,7 @@ class TestCLIIntegration:
     @patch("ci_checks.ci_checks.GhClient")
     def test_non_member_no_labels_skips_checks(self, mock_gh_client_cls, tmp_path):
         """Non-member PR with no labels at all -- CI should NOT run (strict)."""
-        fake = FakeGhClient(member=False)
+        fake = FakeGhClient()
         mock_gh_client_cls.return_value = fake
         output_dir = str(tmp_path / "pr")
         result = main(
@@ -634,8 +625,8 @@ class TestCLIIntegration:
                 "opened",
                 "--labels",
                 "",
-                "--pr-author",
-                "outsider",
+                "--author-association",
+                "NONE",
                 "--output-dir",
                 output_dir,
                 *self._BASE_ARGS,
@@ -647,7 +638,7 @@ class TestCLIIntegration:
     @patch("ci_checks.ci_checks.GhClient")
     def test_non_member_approved_runs_checks_and_saves_payload(self, mock_gh_client_cls, tmp_path):
         """Non-member PR approved (ok-to-test): checks run, payload saved."""
-        fake = FakeGhClient(check_runs_responses=self._ALL_PASS, member=False)
+        fake = FakeGhClient(check_runs_responses=self._ALL_PASS)
         mock_gh_client_cls.return_value = fake
         output_dir = str(tmp_path / "pr")
         result = main(
@@ -658,8 +649,8 @@ class TestCLIIntegration:
                 "labeled",
                 "--labels",
                 "ok-to-test",
-                "--pr-author",
-                "outsider",
+                "--author-association",
+                "NONE",
                 "--output-dir",
                 output_dir,
                 *self._BASE_ARGS,
@@ -682,8 +673,8 @@ class TestCLIIntegration:
                 "opened",
                 "--labels",
                 "",
-                "--pr-author",
-                "alice",
+                "--author-association",
+                "MEMBER",
                 "--output-dir",
                 output_dir,
                 *self._BASE_ARGS,
@@ -702,15 +693,7 @@ class TestSmoke:
     """Smoke tests that call the real gh CLI against the GitHub API."""
 
     _REPO = "kubeflow/pipelines-components"
-    _REPO_OWNER = "kubeflow"
     _KNOWN_SHA = "9fa67b2febaf41e17e631f72e7e8376044b52e32"
-
-    @gh_api
-    def test_is_member_returns_bool(self):
-        """is_member returns a bool for a known user without errors."""
-        gh = GhClient()
-        result = gh.is_member(self._REPO_OWNER, "ghost")
-        assert result is False
 
     @gh_api
     def test_get_check_runs_returns_check_runs_key(self):
