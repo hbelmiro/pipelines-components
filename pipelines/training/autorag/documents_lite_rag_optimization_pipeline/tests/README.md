@@ -97,10 +97,12 @@ To assert that run artifacts are present in object storage, set:
 
 ## Pipeline parameters in integration tests
 
-The integration test passes the **required** Lite pipeline parameters only (secret names, bucket names, keys, chat/embedding URLs and tokens). Optional parameters (`optimization_metric`, `optimization_max_rag_patterns`) can be added to `integration_config.py` and `_pipeline_arguments_from_config()` if needed.
+The integration test passes the **required** Lite pipeline parameters only (secret names, bucket names, keys, chat/embedding URLs and tokens).
+Optional parameters (`optimization_metric`, `optimization_max_rag_patterns`) can be added to `integration_config.py` and `_pipeline_arguments_from_config()` if needed.
 
 ## Troubleshooting
 
 ### 500 Internal Server Error / "Incorrect string value" for `PipelineRuntimeManifest`
 
-If the run fails with a 500 and a message like `Incorrect string value: '...' for column ... PipelineRuntimeManifest`, the KFP backend is storing the workflow manifest in a MySQL (or MariaDB) column that does not support the full UTF-8 range. The `compiled_pipeline_path` fixture sanitizes the compiled pipeline YAML to ASCII before submitting. If the error persists, the cluster database may need to use `utf8mb4` (see the main Documents RAG Optimization pipeline tests README for links and details).
+If the run fails with a 500 and a message like `Incorrect string value: '...' for column ... PipelineRuntimeManifest`, the KFP backend is storing the workflow manifest in a MySQL (or MariaDB) column that does not support the full UTF-8 range.
+The `compiled_pipeline_path` fixture sanitizes the compiled pipeline YAML to ASCII before submitting. If the error persists, the cluster database may need to use `utf8mb4` (see the main Documents RAG Optimization pipeline tests README for links and details).

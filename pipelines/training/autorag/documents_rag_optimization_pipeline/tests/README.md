@@ -93,4 +93,5 @@ To assert that run artifacts (leaderboard HTML, notebooks, rag_patterns) are pre
 
 ## Pipeline parameters in integration tests
 
-The integration test builds pipeline arguments from the integration config. Only the **required** pipeline parameters are passed (secret names, bucket names, keys). Optional pipeline parameters (e.g. `optimization_metric`, `optimization_max_rag_patterns`) can be added to `integration_config.py` and `_pipeline_arguments_from_config()` in `test_pipeline_integration.py` if needed.
+The integration test builds pipeline arguments from the integration config. Only the **required** pipeline parameters are passed (secret names, bucket names, keys).
+Optional pipeline parameters (e.g. `optimization_metric`, `optimization_max_rag_patterns`) can be added to `integration_config.py` and `_pipeline_arguments_from_config()` in `test_pipeline_integration.py` if needed.
