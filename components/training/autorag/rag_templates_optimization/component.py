@@ -89,6 +89,7 @@ def rag_templates_optimization(
     from json import load as json_load
     from pathlib import Path
     from string import Formatter
+    from typing import Any, Literal, Self
 
     import pandas as pd
     import yaml as yml
@@ -427,7 +428,7 @@ def rag_templates_optimization(
         """Generate a filled notebook from templates and output.json.
 
         Args:
-            templates_dict: Dictionary of NotebookCell templates (e.g., INDEXING_CELLS_TEMPLATES).
+            notebook_template: One of the allowed template names.
             output_data: The parsed output.json data.
             output_notebook_path: Path where to save the generated notebook.
             test_data_key: Path to test data file within bucket used as input to AI4RAG.
