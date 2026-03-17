@@ -198,9 +198,9 @@ def leaderboard_evaluation(
 
     results = []
     for model in models:
-        eval_results = json.load(
-            (Path(model.path) / model.metadata["display_name"] / "metrics" / "metrics.json").open("r")
-        )
+        metrics_path = Path(model.path) / model.metadata["display_name"] / "metrics" / "metrics.json"
+        with metrics_path.open("r") as f:
+            eval_results = json.load(f)
         display_name = model.metadata["display_name"]
         model_uri = f"{model.uri.rstrip('/')}/{display_name}"
         predictor_uri = f"{model_uri}/predictor/predictor.pkl"
@@ -214,6 +214,9 @@ def leaderboard_evaluation(
             }
         )
 
+    # Notice: AutoGluon follows the "higher is better" strategy for all metrics.
+    # This means that some metrics—like log_loss and root_mean_squared_error—will have their signs FLIPPED and are shown as negative. # noqa: E501
+    # This is to ensure that a higher value always means a better model, so users do not need to know about the metric's normal directionality when interpreting the leaderboard. # noqa: E501
     leaderboard_df = pd.DataFrame(results).sort_values(by=eval_metric, ascending=False)
     n = len(leaderboard_df)
     leaderboard_df.index = pd.RangeIndex(start=1, stop=n + 1, name="rank")

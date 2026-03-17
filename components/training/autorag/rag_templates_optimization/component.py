@@ -287,14 +287,19 @@ def rag_templates_optimization(
         ) -> "Notebook":
             """Load a Jupyter notebook from a file.
 
-            Args:
-                notebook_name: One of the allowed template names.
+            Parameters
+            ----------
+            path : str | Path
+                Input file path to the .ipynb file.
 
             Returns:
-                Notebook: A new Notebook instance populated with the loaded cells and metadata.
+            -------
+            Notebook
+                A new Notebook instance populated with the loaded cells and metadata.
 
             Examples:
-                >>> nb = Notebook.load("existing_notebook.ipynb")
+            --------
+            >>> nb = Notebook.load("existing_notebook.ipynb")
             """
             with open(Path(embedded_artifact.path) / notebook_name, "r") as f:
                 nb_dict = json_load(f)
