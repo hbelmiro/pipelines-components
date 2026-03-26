@@ -65,10 +65,13 @@ packages = [
     "kfp_components.components.training.automl.autogluon_leaderboard_evaluation",
     "kfp_components.components.training.automl.autogluon_models_full_refit",
     "kfp_components.components.training.automl.autogluon_models_selection",
+    "kfp_components.components.training.automl.autogluon_timeseries_models_full_refit",
+    "kfp_components.components.training.automl.autogluon_timeseries_models_selection",
     "kfp_components.components.evaluation",
     "kfp_components.components.data_processing",
     "kfp_components.components.data_processing.automl",
     "kfp_components.components.data_processing.automl.tabular_data_loader",
+    "kfp_components.components.data_processing.automl.timeseries_data_loader",
     "kfp_components.components.data_processing.yoda_data_processor",
     "kfp_components.components.data_processing.autorag.documents_discovery",
     "kfp_components.components.data_processing.autorag.test_data_loader",
@@ -102,6 +105,7 @@ packages = [
     "kfp_components.pipelines.training.finetuning.sft_minimal",
     "kfp_components.pipelines.training.automl",
     "kfp_components.pipelines.training.automl.autogluon_tabular_training_pipeline",
+    "kfp_components.pipelines.training.automl.autogluon_timeseries_training_pipeline",
 ]
 
 [tool.setuptools.package-dir]
@@ -112,6 +116,7 @@ packages = [
 [tool.setuptools.package-data]
 "*" = ["*.yaml", "*.yml", "*.json"]
 "kfp_components.components.training.automl.autogluon_models_full_refit" = ["notebook_templates/*.ipynb"]
+"kfp_components.components.training.automl.autogluon_timeseries_models_full_refit" = ["notebook_templates/*.ipynb"]
 "kfp_components.components.training.automl.autogluon_leaderboard_evaluation" = ["*.html"]
 "kfp_components.components.training.autorag.rag_templates_optimization" = ["notebook_templates/*.ipynb"]
 
