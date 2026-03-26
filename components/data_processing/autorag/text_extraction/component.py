@@ -32,8 +32,16 @@ def text_extraction(
     from botocore.exceptions import SSLError
     from docling.datamodel.accelerator_options import AcceleratorOptions
     from docling.datamodel.base_models import InputFormat
-    from docling.datamodel.pipeline_options import PdfPipelineOptions
-    from docling.document_converter import DocumentConverter, PdfFormatOption
+    from docling.datamodel.pipeline_options import PaginatedPipelineOptions, PdfPipelineOptions
+    from docling.document_converter import (
+        AsciiDocFormatOption,
+        DocumentConverter,
+        HTMLFormatOption,
+        MarkdownFormatOption,
+        PdfFormatOption,
+        PowerpointFormatOption,
+        WordFormatOption,
+    )
 
     DOCUMENTS_DESCRIPTOR_FILENAME = "documents_descriptor.json"
     SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".md", ".html", ".txt"}
@@ -107,17 +115,45 @@ def text_extraction(
         try:
             path = Path(file_path_str)
             out_dir = Path(output_dir_str)
-            pipeline_options = PdfPipelineOptions()
-            pipeline_options.do_ocr = False
-            pipeline_options.do_table_structure = False
-            pipeline_options.accelerator_options = AcceleratorOptions(device="cpu", num_threads=1)
+            output_file = out_dir / f"{path.name}.md"
+
+            # Handle .txt files directly (docling doesn't support plain text as input format)
+            if path.suffix.lower() == ".txt":
+                logger.info("Processing TXT file %s (direct read)", path.name)
+                text_content = path.read_text(encoding="utf-8")
+                # Save as markdown (plain text is valid markdown)
+                output_file.write_text(text_content, encoding="utf-8")
+                logger.info("Successfully processed %s -> %s", path.name, output_file.name)
+                return True
+
+            # For all other formats, use docling
+            # Configure pipeline options for PDF
+            pdf_pipeline_options = PdfPipelineOptions()
+            pdf_pipeline_options.do_ocr = False
+            pdf_pipeline_options.do_table_structure = False
+            pdf_pipeline_options.accelerator_options = AcceleratorOptions(device="cpu", num_threads=1)
+
+            # Configure pipeline options for paginated documents (DOCX, PPTX)
+            paginated_pipeline_options = PaginatedPipelineOptions()
+            paginated_pipeline_options.generate_page_images = False
+            paginated_pipeline_options.accelerator_options = AcceleratorOptions(device="cpu", num_threads=1)
+
+            # Configure DocumentConverter with format options for all supported formats
             converter = DocumentConverter(
-                format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
+                format_options={
+                    InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_pipeline_options),
+                    InputFormat.DOCX: WordFormatOption(pipeline_options=paginated_pipeline_options),
+                    InputFormat.PPTX: PowerpointFormatOption(pipeline_options=paginated_pipeline_options),
+                    InputFormat.HTML: HTMLFormatOption(),
+                    InputFormat.MD: MarkdownFormatOption(),
+                }
             )
+
+            logger.debug("Processing %s with format %s using docling", path.name, path.suffix)
             result = converter.convert(path)
             markdown_content = result.document.export_to_markdown()
-            output_file = out_dir / f"{path.name}.md"
             output_file.write_text(markdown_content, encoding="utf-8")
+            logger.debug("Successfully processed %s -> %s", path.name, output_file.name)
             return True
         except Exception as e:
             logger.error("Failed to process %s: %s", file_path_str, e)
@@ -146,8 +182,12 @@ def text_extraction(
             ]
 
             if not files_to_process:
+                logger.warning(
+                    "No supported files found in batch %d (downloaded %d files)", batch_idx + 1, len(batch_docs)
+                )
                 continue
 
+            logger.debug("Found %d files to process in batch %d", len(files_to_process), batch_idx + 1)
             process_workers = min(os.cpu_count() or 1, len(files_to_process))
             worker_fn = partial(process_document, output_dir_str=str(output_dir))
             with ThreadPoolExecutor(max_workers=process_workers) as executor:
