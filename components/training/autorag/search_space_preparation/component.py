@@ -156,6 +156,35 @@ def search_space_preparation(
     SAMPLE_SIZE = 5
     SEED = 17
 
+    supported_metrics = ["faithfulness", "answer_correctness", "context_correctness"]
+
+    if embeddings_models and generation_models:
+        if not isinstance(embeddings_models, list):
+            raise TypeError("embeddings_models must be a list.")
+        else:
+            for i, m in enumerate(embeddings_models):
+                if not m:
+                    raise TypeError(f"embeddings_models[{i}] must be a non-empty string.")
+
+        if not isinstance(generation_models, list):
+            raise TypeError("generation_models must be a list when provided.")
+        else:
+            for i, m in enumerate(generation_models):
+                if not m:
+                    raise TypeError(f"generation_models[{i}] must be a non-empty string.")
+    else:
+        for name, value in (
+            ("chat_model_token", chat_model_token),
+            ("chat_model_url", chat_model_url),
+            ("embedding_model_url", embedding_model_url),
+            ("embedding_model_token", embedding_model_token),
+        ):
+            if not value:
+                raise TypeError(f"{name} must be a non-empty string.")
+
+    if metric and metric not in supported_metrics:
+        raise ValueError(f"Metric {metric} is not supported. Supported metrics are {supported_metrics}.")
+
     if embedding_model_url and chat_model_url:
         # Specification of OpenAI API compatibility
         embedding_model_url += "/v1"

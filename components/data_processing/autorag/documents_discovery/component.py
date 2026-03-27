@@ -7,7 +7,7 @@ from kfp import dsl
 )
 def documents_discovery(
     input_data_bucket_name: str,
-    input_data_path: str,
+    input_data_path: str = "",
     test_data: dsl.Input[dsl.Artifact] = None,
     sampling_enabled: bool = True,
     sampling_max_size: float = 1,
@@ -45,6 +45,7 @@ def documents_discovery(
     DOCUMENTS_DESCRIPTOR_FILENAME = "documents_descriptor.json"
     SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".md", ".html", ".txt"}
     MAX_SIZE_BYTES = float(inf)
+
     if sampling_enabled:
         MAX_SIZE_BYTES = float(sampling_max_size) * 1024**3
 

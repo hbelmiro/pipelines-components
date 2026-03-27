@@ -34,8 +34,8 @@ def documents_rag_optimization_pipeline(
     test_data_key: str,
     input_data_secret_name: str,
     input_data_bucket_name: str,
-    input_data_key: str,
     llama_stack_secret_name: str,
+    input_data_key: str = "",
     embeddings_models: Optional[List] = None,
     generation_models: Optional[List] = None,
     optimization_metric: str = "faithfulness",
@@ -64,9 +64,9 @@ def documents_rag_optimization_pipeline(
             for input document data access. The following environment variables are required:
             AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION.
         input_data_bucket_name: S3 (or compatible) bucket name for the input documents.
-        input_data_key: Object key (path) of the input documents in the input data bucket.
         llama_stack_secret_name: Name of the Kubernetes secret for llama-stack API connection.
             The secret must define: LLAMA_STACK_CLIENT_API_KEY, LLAMA_STACK_CLIENT_BASE_URL.
+        input_data_key: Object key (path) of the input documents in the input data bucket.
         embeddings_models: Optional list of embedding model identifiers to use in the search space.
         generation_models: Optional list of foundation/generation model identifiers to use in the
             search space.

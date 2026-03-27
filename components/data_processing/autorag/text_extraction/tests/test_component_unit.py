@@ -1,5 +1,6 @@
 """Tests for the text_extraction component."""
 
+import inspect
 import json
 import shutil
 import sys
@@ -9,10 +10,10 @@ import pytest
 
 from ..component import text_extraction
 
-mocked_env_variables = {
+MOCKED_ENV_VARIABLES = {
     "AWS_ACCESS_KEY_ID": "test_key",
     "AWS_SECRET_ACCESS_KEY": "test_secret",
-    "AWS_S3_ENDPOINT": "test_url",
+    "AWS_S3_ENDPOINT": "https://s3.example.com",
     "AWS_DEFAULT_REGION": "us-east-1",
 }
 
@@ -20,30 +21,91 @@ mocked_env_variables = {
 class _MockSSLError(Exception):
     """Stand-in for botocore.exceptions.SSLError used in unit tests."""
 
-    pass
+
+def _mock_boto_modules():
+    """Return mocked boto3 and botocore modules used in component imports."""
+    mock_boto3 = mock.MagicMock()
+    mock_botocore = mock.MagicMock()
+    mock_botocore_exceptions = mock.MagicMock()
+    mock_botocore_exceptions.SSLError = _MockSSLError
+    mock_botocore.exceptions = mock_botocore_exceptions
+    return {
+        "boto3": mock_boto3,
+        "botocore": mock_botocore,
+        "botocore.exceptions": mock_botocore_exceptions,
+    }
+
+
+def _docling_modules():
+    """Return mock modules for docling imports used in component."""
+    mock_converter = mock.MagicMock()
+    mock_result = mock.MagicMock()
+    mock_result.document.export_to_markdown.return_value = "# text"
+    mock_converter.convert.return_value = mock_result
+    return {
+        "docling": mock.MagicMock(),
+        "docling.datamodel": mock.MagicMock(),
+        "docling.datamodel.accelerator_options": mock.MagicMock(AcceleratorOptions=mock.MagicMock()),
+        "docling.datamodel.base_models": mock.MagicMock(InputFormat=mock.MagicMock(PDF="PDF")),
+        "docling.datamodel.pipeline_options": mock.MagicMock(PdfPipelineOptions=mock.MagicMock()),
+        "docling.document_converter": mock.MagicMock(
+            DocumentConverter=mock.MagicMock(return_value=mock_converter),
+            PdfFormatOption=mock.MagicMock(),
+        ),
+    }
 
 
 class TestTextExtractionUnitTests:
-    """Unit tests for component logic."""
+    """Unit tests for text_extraction success and failure paths."""
 
     def test_component_function_exists(self):
-        """Test that the component function is properly imported."""
+        """Component factory exists and exposes python_func."""
         assert callable(text_extraction)
         assert hasattr(text_extraction, "python_func")
 
     def test_component_with_default_parameters(self):
-        """Test component has expected interface (required args)."""
-        import inspect
-
+        """Component has expected interface (required args)."""
         sig = inspect.signature(text_extraction.python_func)
         params = list(sig.parameters)
         assert "documents_descriptor" in params
         assert "extracted_text" in params
 
-    @mock.patch.dict("os.environ", mocked_env_variables)
+    def test_missing_descriptor_file_raises_file_not_found(self, tmp_path):
+        """Missing documents_descriptor.json raises FileNotFoundError."""
+        documents_descriptor_artifact = mock.MagicMock()
+        documents_descriptor_artifact.path = str(tmp_path / "missing_descriptor_dir")
+        extracted_text_artifact = mock.MagicMock()
+        extracted_text_artifact.path = str(tmp_path / "output")
+
+        with mock.patch.dict(sys.modules, {**_mock_boto_modules(), **_docling_modules()}):
+            with pytest.raises(FileNotFoundError, match="Descriptor not found"):
+                text_extraction.python_func(
+                    documents_descriptor=documents_descriptor_artifact,
+                    extracted_text=extracted_text_artifact,
+                )
+
+    @mock.patch.dict("os.environ", {"AWS_ACCESS_KEY_ID": "x"}, clear=True)
+    def test_missing_required_env_raises_value_error(self, tmp_path):
+        """Missing required S3 env vars raises ValueError with variable name."""
+        descriptor_dir = tmp_path / "descriptor"
+        descriptor_dir.mkdir()
+        (descriptor_dir / "documents_descriptor.json").write_text(
+            json.dumps({"bucket": "my-bucket", "documents": []}),
+            encoding="utf-8",
+        )
+        documents_descriptor_artifact = mock.MagicMock(path=str(descriptor_dir))
+        extracted_text_artifact = mock.MagicMock(path=str(tmp_path / "output"))
+
+        with mock.patch.dict(sys.modules, {**_mock_boto_modules(), **_docling_modules()}):
+            with pytest.raises(ValueError, match="AWS_SECRET_ACCESS_KEY environment variable not set"):
+                text_extraction.python_func(
+                    documents_descriptor=documents_descriptor_artifact,
+                    extracted_text=extracted_text_artifact,
+                )
+
+    @mock.patch.dict("os.environ", MOCKED_ENV_VARIABLES, clear=True)
     def test_ssl_error_retries_with_verify_false(self, tmp_path):
         """SSLError on download_file triggers a retry with verify=False."""
-        # Write a descriptor file
         descriptor_dir = tmp_path / "descriptor"
         descriptor_dir.mkdir()
         descriptor = {
@@ -53,19 +115,17 @@ class TestTextExtractionUnitTests:
             "total_size_bytes": 1000,
             "count": 1,
         }
-        descriptor_path = descriptor_dir / "documents_descriptor.json"
-        descriptor_path.write_text(json.dumps(descriptor))
+        (descriptor_dir / "documents_descriptor.json").write_text(json.dumps(descriptor), encoding="utf-8")
 
         mock_boto3 = mock.MagicMock()
         mock_s3_fail = mock.MagicMock()
         mock_s3_ok = mock.MagicMock()
-
         mock_s3_fail.download_file.side_effect = _MockSSLError("SSL validation failed")
         mock_s3_ok.download_file.return_value = None
 
         session_call_count = 0
 
-        def fake_session_client(*args, **kwargs):
+        def fake_session_client(*_args, **_kwargs):
             nonlocal session_call_count
             session_call_count += 1
             if session_call_count == 1:
@@ -81,19 +141,8 @@ class TestTextExtractionUnitTests:
         mock_botocore_exceptions.SSLError = _MockSSLError
         mock_botocore.exceptions = mock_botocore_exceptions
 
-        # Mock docling modules
-        mock_docling = mock.MagicMock()
-        mock_docling_datamodel = mock.MagicMock()
-        mock_docling_accel = mock.MagicMock()
-        mock_docling_base = mock.MagicMock()
-        mock_docling_pipeline = mock.MagicMock()
-        mock_docling_converter = mock.MagicMock()
-
-        documents_descriptor_artifact = mock.MagicMock()
-        documents_descriptor_artifact.path = str(descriptor_dir)
-
-        extracted_text_artifact = mock.MagicMock()
-        extracted_text_artifact.path = str(tmp_path / "output")
+        documents_descriptor_artifact = mock.MagicMock(path=str(descriptor_dir))
+        extracted_text_artifact = mock.MagicMock(path=str(tmp_path / "output"))
 
         with mock.patch.dict(
             sys.modules,
@@ -101,12 +150,7 @@ class TestTextExtractionUnitTests:
                 "boto3": mock_boto3,
                 "botocore": mock_botocore,
                 "botocore.exceptions": mock_botocore_exceptions,
-                "docling": mock_docling,
-                "docling.datamodel": mock_docling_datamodel,
-                "docling.datamodel.accelerator_options": mock_docling_accel,
-                "docling.datamodel.base_models": mock_docling_base,
-                "docling.datamodel.pipeline_options": mock_docling_pipeline,
-                "docling.document_converter": mock_docling_converter,
+                **_docling_modules(),
             },
         ):
             text_extraction.python_func(

@@ -20,8 +20,8 @@ The system integrates with llama-stack API for inference and vector database ope
 | `test_data_key` | `str` | `None` | Object key (path) of the test data JSON file in the test data bucket. |
 | `input_data_secret_name` | `str` | `None` | Name of the Kubernetes secret holding S3-compatible credentials for input document data access. The following environment variables are required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION. |
 | `input_data_bucket_name` | `str` | `None` | S3 (or compatible) bucket name for the input documents. |
-| `input_data_key` | `str` | `None` | Object key (path) of the input documents in the input data bucket. |
 | `llama_stack_secret_name` | `str` | `None` | Name of the Kubernetes secret for llama-stack API connection. The secret must define: LLAMA_STACK_CLIENT_API_KEY, LLAMA_STACK_CLIENT_BASE_URL. |
+| `input_data_key` | `str` | `""` | Object key (path) of the input documents in the input data bucket. |
 | `embeddings_models` | `Optional[List]` | `None` | Optional list of embedding model identifiers to use in the search space. |
 | `generation_models` | `Optional[List]` | `None` | Optional list of foundation/generation model identifiers to use in the search space. |
 | `optimization_metric` | `str` | `faithfulness` | Quality metric used to optimize RAG patterns. Supported values: "faithfulness", "answer_correctness", "context_correctness". |

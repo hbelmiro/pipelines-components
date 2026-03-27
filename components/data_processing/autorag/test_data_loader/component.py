@@ -1,3 +1,5 @@
+from json import JSONDecodeError
+
 from kfp import dsl
 
 
@@ -25,6 +27,7 @@ def test_data_loader(test_data_bucket_name: str, test_data_path: str, test_data:
         ValueError: If S3 credentials are missing or misconfigured.
         Exception: If the download fails or the path is not a JSON file.
     """
+    import json
     import logging
     import os
     import sys
@@ -38,8 +41,15 @@ def test_data_loader(test_data_bucket_name: str, test_data_path: str, test_data:
         handler = logging.StreamHandler(sys.stdout)
         logger.addHandler(handler)
 
+    if not test_data_bucket_name:
+        raise TypeError("test_data_bucket_name must be a non-empty string")
+
     def get_test_data_s3():
         """Validate S3 credentials and download the JSON test data file."""
+
+        class TestDataLoaderException(Exception):
+            pass
+
         s3_creds = {
             k: os.environ.get(k)
             for k in ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_S3_ENDPOINT", "AWS_DEFAULT_REGION"]
@@ -62,35 +72,36 @@ def test_data_loader(test_data_bucket_name: str, test_data_path: str, test_data:
 
         s3_client = _make_s3_client()
 
-        if test_data_path.endswith(".json"):
-            logger.info(f"Fetching test data from S3: bucket={test_data_bucket_name}, path={test_data_path}")
-            try:
-                logger.info(f"Starting download to {test_data.path}")
-                s3_client.download_file(test_data_bucket_name, test_data_path, test_data.path)
-                logger.info("Download completed successfully")
-            except SSLError:
-                logger.warning(
-                    "SSL error when downloading %s, retrying with verify=False",
-                    test_data_path,
-                )
-                s3_client = _make_s3_client(verify=False)
-                s3_client.download_file(test_data_bucket_name, test_data_path, test_data.path)
-                logger.info("Download completed successfully with verify=False")
-            except ClientError as e:
-                if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
-                    raise FileNotFoundError(
-                        "Test data object not found in S3. bucket=%r, key=%r. "
-                        "Check that test_data_key (pipeline parameter) is the full object key to an existing JSON file."
-                        % (test_data_bucket_name, test_data_path)
-                    ) from e
-                logger.error("Failed to fetch %s: %s", test_data_path, e)
-                raise
-            except Exception as e:
-                logger.error("Failed to fetch %s: %s", test_data_path, e)
-                raise
-        else:
-            logger.error("Test data must be a json file: %s", test_data_path)
-            raise
+        logger.info(f"Fetching test data from S3: bucket={test_data_bucket_name}, path={test_data_path}")
+        try:
+            logger.info(f"Starting download to {test_data.path}")
+            s3_client.download_file(test_data_bucket_name, test_data_path, test_data.path)
+            logger.info("Download completed successfully")
+        except SSLError:
+            logger.warning(
+                "SSL error when downloading %s, retrying with verify=False",
+                test_data_path,
+            )
+            s3_client = _make_s3_client(verify=False)
+            s3_client.download_file(test_data_bucket_name, test_data_path, test_data.path)
+            logger.info("Download completed successfully with verify=False")
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
+                raise FileNotFoundError(
+                    "Test data object not found in S3. bucket=%r, key=%r. "
+                    "Check that test_data_key (pipeline parameter) is the full object key to an existing JSON file."
+                    % (test_data_bucket_name, test_data_path)
+                ) from e
+            else:
+                raise TestDataLoaderException("Failed to fetch %s: %s", test_data_path, e) from e
+        except Exception as e:
+            raise TestDataLoaderException("Failed to fetch %s: %s", test_data_path, e) from e
+
+        try:
+            with open(test_data.path, "r") as f:
+                json.load(f)
+        except JSONDecodeError as e:
+            raise TestDataLoaderException("test_data_path must point to a valid JSON file.") from e
 
     get_test_data_s3()
 

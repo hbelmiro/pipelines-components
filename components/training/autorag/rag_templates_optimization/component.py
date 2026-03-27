@@ -21,14 +21,14 @@ def rag_templates_optimization(
     search_space_prep_report: dsl.InputPath(dsl.Artifact),
     rag_patterns: dsl.Output[dsl.Artifact],
     embedded_artifact: dsl.EmbeddedInput[dsl.Dataset],
+    test_data_key: Optional[str],
     chat_model_url: Optional[str] = None,
     chat_model_token: Optional[str] = None,
     embedding_model_url: Optional[str] = None,
     embedding_model_token: Optional[str] = None,
-    llama_stack_vector_database_id: Optional[str] = None,
+    llama_stack_vector_database_id: Optional[str] = "ls_milvus",
     optimization_settings: Optional[dict] = None,
-    input_data_key: Optional[str] = None,
-    test_data_key: Optional[str] = None,
+    input_data_key: Optional[str] = "",
 ):
     """RAG Templates Optimization component.
 
@@ -46,6 +46,8 @@ def rag_templates_optimization(
 
         embedded_artifact: kfp-enforced argument to allow access of base64 encoded dir with notebook templates.
 
+        test_data_key: Path to the benchmark JSON file in object storage used by generated notebooks.
+
         chat_model_url: Inference endpoint URL for the chat/generation model (OpenAI-compatible).
             Required for in-memory scenario.
 
@@ -55,14 +57,11 @@ def rag_templates_optimization(
 
         embedding_model_token: Optional API token for the embedding model endpoint. Omit if no auth.
 
-        vector_database: An identificator of the vector store used in the experiment.
-
         llama_stack_vector_database_id: Vector database identifier as registered in llama-stack.
 
         optimization_settings: Additional settings customising the experiment.
 
         input_data_key: A path to documents dir within a bucket used as an input to AI4RAG experiment.
-        test_data_key: A path to test data file within a bucket used as an input to AI4RAG experiment.
 
     Returns:
         rag_patterns: Folder containing all generated RAG patterns (each subdir: pattern.json,
@@ -109,6 +108,12 @@ def rag_templates_optimization(
     from llama_stack_client import LlamaStackClient
     from openai import APIConnectionError as OAIAPIConnectionError
     from openai import OpenAI
+
+    DEFAULT_MAX_NUMBER_OF_RAG_PATTERNS = 8
+    MAX_NUMBER_OF_RAG_PATTERNS_ALLOWED_RANGE = (4, 20)
+    METRIC = "faithfulness"
+    SUPPORTED_OPTIMIZATION_METRICS = frozenset({"faithfulness", "answer_correctness", "context_correctness"})
+    SUPPORTED_VS_TYPES = ("ls_milvus",)
 
     _ssl_logger = logging.getLogger(__name__)
 
@@ -160,9 +165,31 @@ def rag_templates_optimization(
                 raise
         return client
 
-    MAX_NUMBER_OF_RAG_PATTERNS = 8
-    METRIC = "faithfulness"
-    SUPPORTED_OPTIMIZATION_METRICS = frozenset({"faithfulness", "answer_correctness", "context_correctness"})
+    if llama_stack_vector_database_id and llama_stack_vector_database_id not in SUPPORTED_VS_TYPES:
+        raise ValueError(
+            f"llama_stack_vector_database_id {llama_stack_vector_database_id} is not supported,"
+            f" supported types are {SUPPORTED_VS_TYPES}."
+        )
+
+    if not isinstance(test_data_key, str) or not test_data_key.strip() or not test_data_key.lower().endswith(".json"):
+        raise ValueError("test_data_path must point to a JSON file")
+
+    if optimization_settings is not None:
+        if not isinstance(optimization_settings, dict):
+            raise TypeError("optimization_settings must be a dictionary.")
+        max_rag_patterns = optimization_settings.get("max_number_of_rag_patterns", DEFAULT_MAX_NUMBER_OF_RAG_PATTERNS)
+        if not isinstance(max_rag_patterns, int):
+            raise TypeError("optimization_settings.max_number_of_rag_patterns must be an integer.")
+        if not (
+            MAX_NUMBER_OF_RAG_PATTERNS_ALLOWED_RANGE[0]
+            <= max_rag_patterns
+            <= MAX_NUMBER_OF_RAG_PATTERNS_ALLOWED_RANGE[1]
+        ):
+            raise ValueError(
+                f"optimization_settings.max_number_of_rag_patterns must be in a range"
+                f"{MAX_NUMBER_OF_RAG_PATTERNS_ALLOWED_RANGE[0]} to "
+                f"{MAX_NUMBER_OF_RAG_PATTERNS_ALLOWED_RANGE[1]}."
+            )
 
     class NotebookCell:
         """Represents a single cell in a Jupyter notebook.
@@ -561,6 +588,14 @@ def rag_templates_optimization(
     if llama_stack_client_base_url and llama_stack_client_api_key:
         client = Client(llama_stack=_create_llama_stack_client())
     else:
+        for name, value in (
+            ("chat_model_url", chat_model_url),
+            ("chat_model_token", chat_model_token),
+            ("embedding_model_url", embedding_model_url),
+            ("embedding_model_token", embedding_model_token),
+        ):
+            if not value:
+                raise TypeError(f"{name} must be a non-empty string.")
         if not all(
             (
                 chat_model_url,
@@ -622,7 +657,7 @@ def rag_templates_optimization(
     )
 
     event_handler = TmpEventHandler()
-    max_rag_patterns = optimization_settings.get("max_number_of_rag_patterns", MAX_NUMBER_OF_RAG_PATTERNS)
+    max_rag_patterns = optimization_settings.get("max_number_of_rag_patterns", DEFAULT_MAX_NUMBER_OF_RAG_PATTERNS)
     optimizer_settings = GAMOptSettings(max_evals=int(max_rag_patterns))
 
     benchmark_data = pd.read_json(Path(test_data))
@@ -820,6 +855,8 @@ def rag_templates_optimization(
             evaluation_result_list = _evaluation_result_fallback(eval_data, eval)
         with (patt_dir / "evaluation_results.json").open("w+", encoding="utf-8") as f:
             json_dump(evaluation_result_list, f, indent=2)
+
+    # TODO autorag_run_artifact
 
 
 if __name__ == "__main__":

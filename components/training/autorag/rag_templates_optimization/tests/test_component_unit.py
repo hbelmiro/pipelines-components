@@ -36,6 +36,22 @@ def _make_httpx_module():
     return mod
 
 
+def _make_minimal_httpx_module():
+    """Return a minimal httpx stub for validation-only test paths."""
+    mod = types.ModuleType("httpx")
+
+    class ConnectError(Exception):
+        pass
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    mod.ConnectError = ConnectError
+    mod.Client = Client
+    return mod
+
+
 def _make_llama_stack_client_module():
     """Stub llama_stack_client with a real APIConnectionError (MagicMock breaks except clauses)."""
     mod = types.ModuleType("llama_stack_client")
@@ -105,6 +121,45 @@ def _make_all_mocks():
     return mocks
 
 
+def _minimal_dependency_modules():
+    """Mock imported heavy third-party modules for validation-path tests."""
+    return {
+        "pandas": mock.MagicMock(),
+        "yaml": mock.MagicMock(),
+        "ai4rag": mock.MagicMock(),
+        "ai4rag.core": mock.MagicMock(),
+        "ai4rag.core.experiment": mock.MagicMock(),
+        "ai4rag.core.experiment.experiment": mock.MagicMock(AI4RAGExperiment=mock.MagicMock()),
+        "ai4rag.core.experiment.results": mock.MagicMock(ExperimentResults=mock.MagicMock()),
+        "ai4rag.core.hpo": mock.MagicMock(),
+        "ai4rag.core.hpo.gam_opt": mock.MagicMock(GAMOptSettings=mock.MagicMock()),
+        "ai4rag.rag": mock.MagicMock(),
+        "ai4rag.rag.embedding": mock.MagicMock(),
+        "ai4rag.rag.embedding.base_model": mock.MagicMock(BaseEmbeddingModel=mock.MagicMock()),
+        "ai4rag.rag.embedding.llama_stack": mock.MagicMock(LSEmbeddingModel=mock.MagicMock()),
+        "ai4rag.rag.embedding.openai_model": mock.MagicMock(OpenAIEmbeddingModel=mock.MagicMock()),
+        "ai4rag.rag.foundation_models": mock.MagicMock(),
+        "ai4rag.rag.foundation_models.base_model": mock.MagicMock(BaseFoundationModel=mock.MagicMock()),
+        "ai4rag.rag.foundation_models.llama_stack": mock.MagicMock(LSFoundationModel=mock.MagicMock()),
+        "ai4rag.rag.foundation_models.openai_model": mock.MagicMock(OpenAIFoundationModel=mock.MagicMock()),
+        "ai4rag.search_space": mock.MagicMock(),
+        "ai4rag.search_space.src": mock.MagicMock(),
+        "ai4rag.search_space.src.parameter": mock.MagicMock(Parameter=mock.MagicMock()),
+        "ai4rag.search_space.src.search_space": mock.MagicMock(AI4RAGSearchSpace=mock.MagicMock()),
+        "ai4rag.utils": mock.MagicMock(),
+        "ai4rag.utils.event_handler": mock.MagicMock(),
+        "ai4rag.utils.event_handler.event_handler": mock.MagicMock(
+            BaseEventHandler=type("BaseEventHandler", (), {}),
+            LogLevel=mock.MagicMock(),
+        ),
+        "langchain_core": mock.MagicMock(),
+        "langchain_core.documents": mock.MagicMock(Document=mock.MagicMock()),
+        "llama_stack_client": mock.MagicMock(LlamaStackClient=mock.MagicMock()),
+        "openai": mock.MagicMock(OpenAI=mock.MagicMock()),
+        "httpx": _make_minimal_httpx_module(),
+    }
+
+
 class TestRagTemplatesOptimizationUnitTests:
     """Unit tests for component logic."""
 
@@ -123,6 +178,43 @@ class TestRagTemplatesOptimizationUnitTests:
         assert "test_data" in params
         assert "search_space_prep_report" in params
         assert "rag_patterns" in params
+
+    def test_missing_chat_model_url_raises_type_error(self):
+        """Missing required model endpoint args raises TypeError early."""
+        with mock.patch.dict(sys.modules, _minimal_dependency_modules()):
+            with pytest.raises(TypeError, match="chat_model_url must be a non-empty string"):
+                rag_templates_optimization.python_func(
+                    extracted_text="/tmp/extracted",
+                    test_data="/tmp/test_data.json",
+                    search_space_prep_report="/tmp/report.yml",
+                    rag_patterns=mock.MagicMock(path="/tmp/rag_patterns", metadata={}, uri=""),
+                    embedded_artifact=mock.MagicMock(path="/tmp/embedded"),
+                    test_data_key="small-dataset/benchmark.json",
+                    chat_model_url="",
+                    chat_model_token="token",
+                    embedding_model_url="https://emb",
+                    embedding_model_token="token",
+                    optimization_settings={"metric": "faithfulness", "max_number_of_rag_patterns": 8},
+                )
+
+    def test_invalid_vector_store_id_raises_value_error(self):
+        """Unsupported llama_stack_vector_database_id raises ValueError."""
+        with mock.patch.dict(sys.modules, _minimal_dependency_modules()):
+            with pytest.raises(ValueError, match="is not supported"):
+                rag_templates_optimization.python_func(
+                    extracted_text="/tmp/extracted",
+                    test_data="/tmp/test_data.json",
+                    search_space_prep_report="/tmp/report.yml",
+                    rag_patterns=mock.MagicMock(path="/tmp/rag_patterns", metadata={}, uri=""),
+                    embedded_artifact=mock.MagicMock(path="/tmp/embedded"),
+                    test_data_key="small-dataset/benchmark.json",
+                    chat_model_url="https://chat",
+                    chat_model_token="token",
+                    embedding_model_url="https://emb",
+                    embedding_model_token="token",
+                    llama_stack_vector_database_id="unsupported_vs",
+                    optimization_settings={"metric": "faithfulness", "max_number_of_rag_patterns": 8},
+                )
 
 
 class TestSSLFallbackRagTemplatesOptimization:
@@ -191,6 +283,7 @@ class TestSSLFallbackRagTemplatesOptimization:
                     search_space_prep_report=search_space_report,
                     rag_patterns=rag_patterns,
                     embedded_artifact=embedded_artifact,
+                    test_data_key="small-dataset/benchmark.json",
                 )
 
         assert ls_call_count == 2, "LlamaStackClient should be instantiated twice (initial + SSL retry)"
@@ -250,6 +343,7 @@ class TestSSLFallbackRagTemplatesOptimization:
                     search_space_prep_report=search_space_report,
                     rag_patterns=rag_patterns,
                     embedded_artifact=embedded_artifact,
+                    test_data_key="small-dataset/benchmark.json",
                 )
 
         assert ls_call_count == 2, "LlamaStackClient should be instantiated twice (initial + SSL retry)"
@@ -287,6 +381,7 @@ class TestSSLFallbackRagTemplatesOptimization:
                     search_space_prep_report=search_space_report,
                     rag_patterns=rag_patterns,
                     embedded_artifact=embedded_artifact,
+                    test_data_key="small-dataset/benchmark.json",
                 )
 
     @mock.patch.dict(
@@ -322,6 +417,7 @@ class TestSSLFallbackRagTemplatesOptimization:
                     search_space_prep_report=search_space_report,
                     rag_patterns=rag_patterns,
                     embedded_artifact=embedded_artifact,
+                    test_data_key="small-dataset/benchmark.json",
                 )
 
     def test_openai_client_ssl_retry_with_verify_false(self, tmp_path):
@@ -367,6 +463,7 @@ class TestSSLFallbackRagTemplatesOptimization:
                     search_space_prep_report=search_space_report,
                     rag_patterns=rag_patterns,
                     embedded_artifact=embedded_artifact,
+                    test_data_key="small-dataset/benchmark.json",
                     chat_model_url="http://chat.example.com",
                     chat_model_token="chat-token",
                     embedding_model_url="http://embed.example.com",
@@ -422,6 +519,7 @@ class TestSSLFallbackRagTemplatesOptimization:
                     search_space_prep_report=search_space_report,
                     rag_patterns=rag_patterns,
                     embedded_artifact=embedded_artifact,
+                    test_data_key="small-dataset/benchmark.json",
                     chat_model_url="http://chat.example.com",
                     chat_model_token="chat-token",
                     embedding_model_url="http://embed.example.com",
@@ -460,6 +558,7 @@ class TestSSLFallbackRagTemplatesOptimization:
                     search_space_prep_report=search_space_report,
                     rag_patterns=rag_patterns,
                     embedded_artifact=embedded_artifact,
+                    test_data_key="small-dataset/benchmark.json",
                     chat_model_url="http://chat.example.com",
                     chat_model_token="chat-token",
                     embedding_model_url="http://embed.example.com",

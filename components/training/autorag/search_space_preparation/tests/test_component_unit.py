@@ -36,6 +36,22 @@ def _make_httpx_module():
     return mod
 
 
+def _make_minimal_httpx_module():
+    """Return a minimal httpx stub for validation-only test paths."""
+    mod = types.ModuleType("httpx")
+
+    class ConnectError(Exception):
+        pass
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    mod.ConnectError = ConnectError
+    mod.Client = Client
+    return mod
+
+
 def _make_llama_stack_client_module():
     """Stub llama_stack_client with a real APIConnectionError (MagicMock breaks except clauses)."""
     mod = types.ModuleType("llama_stack_client")
@@ -95,6 +111,39 @@ def _make_all_mocks():
     return mocks
 
 
+def _minimal_dependency_modules():
+    """Mock imported heavy third-party modules for validation-path tests."""
+    return {
+        "pandas": mock.MagicMock(),
+        "yaml": mock.MagicMock(),
+        "ai4rag": mock.MagicMock(),
+        "ai4rag.core": mock.MagicMock(),
+        "ai4rag.core.experiment": mock.MagicMock(),
+        "ai4rag.core.experiment.benchmark_data": mock.MagicMock(BenchmarkData=mock.MagicMock()),
+        "ai4rag.core.experiment.mps": mock.MagicMock(ModelsPreSelector=mock.MagicMock()),
+        "ai4rag.rag": mock.MagicMock(),
+        "ai4rag.rag.embedding": mock.MagicMock(),
+        "ai4rag.rag.embedding.base_model": mock.MagicMock(BaseEmbeddingModel=mock.MagicMock()),
+        "ai4rag.rag.embedding.openai_model": mock.MagicMock(OpenAIEmbeddingModel=mock.MagicMock()),
+        "ai4rag.rag.foundation_models": mock.MagicMock(),
+        "ai4rag.rag.foundation_models.base_model": mock.MagicMock(BaseFoundationModel=mock.MagicMock()),
+        "ai4rag.rag.foundation_models.openai_model": mock.MagicMock(OpenAIFoundationModel=mock.MagicMock()),
+        "ai4rag.search_space": mock.MagicMock(),
+        "ai4rag.search_space.prepare": mock.MagicMock(),
+        "ai4rag.search_space.prepare.prepare_search_space": mock.MagicMock(
+            prepare_search_space_with_llama_stack=mock.MagicMock()
+        ),
+        "ai4rag.search_space.src": mock.MagicMock(),
+        "ai4rag.search_space.src.parameter": mock.MagicMock(Parameter=mock.MagicMock()),
+        "ai4rag.search_space.src.search_space": mock.MagicMock(AI4RAGSearchSpace=mock.MagicMock()),
+        "langchain_core": mock.MagicMock(),
+        "langchain_core.documents": mock.MagicMock(Document=mock.MagicMock()),
+        "llama_stack_client": mock.MagicMock(LlamaStackClient=mock.MagicMock()),
+        "openai": mock.MagicMock(OpenAI=mock.MagicMock()),
+        "httpx": _make_minimal_httpx_module(),
+    }
+
+
 class TestSearchSpacePreparationUnitTests:
     """Unit tests for component logic."""
 
@@ -112,6 +161,31 @@ class TestSearchSpacePreparationUnitTests:
         assert "test_data" in params
         assert "extracted_text" in params
         assert "search_space_prep_report" in params
+
+    def test_non_list_embeddings_models_raises_type_error(self):
+        """embeddings_models must be a list when both model lists are provided."""
+        with mock.patch.dict(sys.modules, _minimal_dependency_modules()):
+            with pytest.raises(TypeError, match="embeddings_models must be a list"):
+                search_space_preparation.python_func(
+                    test_data=mock.MagicMock(path="/tmp/test_data.json"),
+                    extracted_text=mock.MagicMock(path="/tmp/extracted"),
+                    search_space_prep_report=mock.MagicMock(path="/tmp/report.yaml"),
+                    embeddings_models="not-a-list",
+                    generation_models=["model-a"],
+                )
+
+    def test_unsupported_metric_raises_value_error(self):
+        """Unsupported metric value raises ValueError with supported list."""
+        with mock.patch.dict(sys.modules, _minimal_dependency_modules()):
+            with pytest.raises(ValueError, match="is not supported"):
+                search_space_preparation.python_func(
+                    test_data=mock.MagicMock(path="/tmp/test_data.json"),
+                    extracted_text=mock.MagicMock(path="/tmp/extracted"),
+                    search_space_prep_report=mock.MagicMock(path="/tmp/report.yaml"),
+                    embeddings_models=["embed-a"],
+                    generation_models=["gen-a"],
+                    metric="unsupported_metric",
+                )
 
 
 class TestSSLFallbackSearchSpacePreparation:
@@ -173,6 +247,10 @@ class TestSSLFallbackSearchSpacePreparation:
                     test_data=test_data,
                     extracted_text=extracted_text,
                     search_space_prep_report=search_space_prep_report,
+                    chat_model_url="http://chat.example.com",
+                    chat_model_token="chat-token",
+                    embedding_model_url="http://embed.example.com",
+                    embedding_model_token="embed-token",
                 )
 
         assert ls_call_count == 2, "LlamaStackClient should be instantiated twice (initial + SSL retry)"
@@ -231,6 +309,10 @@ class TestSSLFallbackSearchSpacePreparation:
                     test_data=test_data,
                     extracted_text=extracted_text,
                     search_space_prep_report=search_space_prep_report,
+                    chat_model_url="http://chat.example.com",
+                    chat_model_token="chat-token",
+                    embedding_model_url="http://embed.example.com",
+                    embedding_model_token="embed-token",
                 )
 
         assert ls_call_count == 2, "LlamaStackClient should be instantiated twice (initial + SSL retry)"
@@ -265,6 +347,10 @@ class TestSSLFallbackSearchSpacePreparation:
                     test_data=test_data,
                     extracted_text=extracted_text,
                     search_space_prep_report=search_space_prep_report,
+                    chat_model_url="http://chat.example.com",
+                    chat_model_token="chat-token",
+                    embedding_model_url="http://embed.example.com",
+                    embedding_model_token="embed-token",
                 )
 
     @mock.patch.dict(
@@ -297,6 +383,10 @@ class TestSSLFallbackSearchSpacePreparation:
                     test_data=test_data,
                     extracted_text=extracted_text,
                     search_space_prep_report=search_space_prep_report,
+                    chat_model_url="http://chat.example.com",
+                    chat_model_token="chat-token",
+                    embedding_model_url="http://embed.example.com",
+                    embedding_model_token="embed-token",
                 )
 
     def test_openai_client_ssl_retry_with_verify_false(self, tmp_path):

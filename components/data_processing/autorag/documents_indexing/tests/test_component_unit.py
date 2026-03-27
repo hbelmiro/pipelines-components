@@ -60,6 +60,40 @@ def _make_all_mocks():
     return mocks
 
 
+def _patch_indexing_dependencies():
+    """Return modules dict to mock ai4rag/langchain/llama-stack imports."""
+    mock_chunker_cls = mock.MagicMock()
+    mock_chunker = mock.MagicMock()
+    mock_chunker.split_documents.return_value = ["chunk-1", "chunk-2"]
+    mock_chunker_cls.return_value = mock_chunker
+
+    mock_ls_embedding_params = mock.MagicMock()
+    mock_ls_embedding_model = mock.MagicMock()
+    mock_ls_vector_store = mock.MagicMock()
+    mock_ls_vector_store.add_documents = mock.MagicMock()
+    mock_llama_client = mock.MagicMock()
+    mock_document = mock.MagicMock(side_effect=lambda **kwargs: kwargs)
+
+    mods = {
+        "ai4rag": mock.MagicMock(),
+        "ai4rag.rag": mock.MagicMock(),
+        "ai4rag.rag.chunking": mock.MagicMock(LangChainChunker=mock_chunker_cls),
+        "ai4rag.rag.embedding": mock.MagicMock(),
+        "ai4rag.rag.embedding.llama_stack": mock.MagicMock(
+            LSEmbeddingModel=mock_ls_embedding_model,
+            LSEmbeddingParams=mock_ls_embedding_params,
+        ),
+        "ai4rag.rag.vector_store": mock.MagicMock(),
+        "ai4rag.rag.vector_store.llama_stack": mock.MagicMock(
+            LSVectorStore=mock.MagicMock(return_value=mock_ls_vector_store),
+        ),
+        "langchain_core": mock.MagicMock(),
+        "langchain_core.documents": mock.MagicMock(Document=mock_document),
+        "llama_stack_client": mock.MagicMock(LlamaStackClient=mock.MagicMock(return_value=mock_llama_client)),
+    }
+    return mods, mock_ls_vector_store
+
+
 class TestDocumentsIndexingUnitTests:
     """Unit tests for component logic."""
 
@@ -77,6 +111,43 @@ class TestDocumentsIndexingUnitTests:
         assert "embedding_model_id" in params
         assert "extracted_text" in params
         assert "llama_stack_vector_database_id" in params
+
+    def test_invalid_vector_store_type_raises_value_error(self, tmp_path):
+        """Unsupported llama_stack_vector_database_id raises ValueError."""
+        mods, _ = _patch_indexing_dependencies()
+        extracted = mock.MagicMock(path=str(tmp_path))
+        with mock.patch.dict(sys.modules, mods):
+            with pytest.raises(ValueError, match="is not supported"):
+                documents_indexing.python_func(
+                    embedding_model_id="embed-model",
+                    extracted_text=extracted,
+                    llama_stack_vector_database_id="unsupported",
+                )
+
+    def test_empty_embedding_model_id_raises_value_error(self, tmp_path):
+        """Empty embedding_model_id is rejected."""
+        mods, _ = _patch_indexing_dependencies()
+        extracted = mock.MagicMock(path=str(tmp_path))
+        with mock.patch.dict(sys.modules, mods):
+            with pytest.raises(ValueError, match="embedding_model_id must be a non-empty string"):
+                documents_indexing.python_func(
+                    embedding_model_id="",
+                    extracted_text=extracted,
+                    llama_stack_vector_database_id="ls_milvus",
+                )
+
+    def test_invalid_chunk_size_type_raises_type_error(self, tmp_path):
+        """Non-int chunk_size is rejected."""
+        mods, _ = _patch_indexing_dependencies()
+        extracted = mock.MagicMock(path=str(tmp_path))
+        with mock.patch.dict(sys.modules, mods):
+            with pytest.raises(TypeError, match="chunk_size must be an integer"):
+                documents_indexing.python_func(
+                    embedding_model_id="embed-model",
+                    extracted_text=extracted,
+                    llama_stack_vector_database_id="ls_milvus",
+                    chunk_size="1024",
+                )
 
 
 class TestSSLFallbackDocumentsIndexing:

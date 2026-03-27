@@ -20,11 +20,11 @@ The system integrates with OpenAI API for inference and in-memory ChromaDB vecto
 | `test_data_key` | `str` | `None` | Object key (path) of the test data JSON file in the test data bucket. |
 | `input_data_secret_name` | `str` | `None` | Name of the Kubernetes secret holding S3-compatible credentials for input document data access. The following environment variables are required: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_DEFAULT_REGION. |
 | `input_data_bucket_name` | `str` | `None` | S3 (or compatible) bucket name for the input documents. |
-| `input_data_key` | `str` | `None` | Object key (path) of the input documents in the input data bucket. |
 | `chat_model_url` | `str` | `None` | Inference endpoint URL for the chat/generation model (OpenAI-compatible endpoint). |
 | `chat_model_token` | `str` | `None` | API token or key for authenticating with the chat model endpoint. |
 | `embedding_model_url` | `str` | `None` | Inference endpoint URL for the embedding model. |
 | `embedding_model_token` | `str` | `None` | API token or key for authenticating with the embedding model endpoint. |
+| `input_data_key` | `str` | `""` | Object key (path) of the input documents in the input data bucket. |
 | `optimization_metric` | `str` | `faithfulness` | Quality metric used to optimize RAG patterns. Supported values: "faithfulness", "answer_correctness", "context_correctness". Defaults to "faithfulness". |
 | `optimization_max_rag_patterns` | `int` | `8` | Maximum number of RAG patterns to generate. Passed to ai4rag (max_number_of_rag_patterns). Defaults to 8. |
 
