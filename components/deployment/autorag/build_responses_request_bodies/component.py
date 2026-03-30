@@ -2,10 +2,6 @@
 
 from kfp import dsl
 
-# Fixed placeholder question embedded in generated ``POST /v1/responses`` bodies (overridden at
-# runtime by ``create_model_response.py`` when the user enters a question).
-RESPONSES_BODY_DEFAULT_QUESTION = "What information is available in the indexed knowledge base?"
-
 
 @dsl.component(
     base_image="registry.redhat.io/rhoai/odh-pipeline-runtime-datascience-cpu-py312-rhel9@sha256:f9844dc150592a9f196283b3645dda92bd80dfdb3d467fa8725b10267ea5bdbc",
@@ -50,6 +46,10 @@ def prepare_responses_api_requests(
     import json
     import os
     from pathlib import Path
+
+    # Fixed placeholder question embedded in generated ``POST /v1/responses`` bodies (overridden at
+    # runtime by ``create_model_response.py`` when the user enters a question).
+    RESPONSES_BODY_DEFAULT_QUESTION = "What information is available in the indexed knowledge base?"
 
     output_filename = "v1_responses_body.json"
     script_filename = "create_model_response.py"
