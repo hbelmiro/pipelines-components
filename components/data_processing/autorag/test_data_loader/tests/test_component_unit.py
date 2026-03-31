@@ -144,15 +144,25 @@ class TestTestDataLoaderUnitTests:
 
     def test_empty_bucket_name_raises_type_error(self, tmp_path):
         """Empty test_data_bucket_name raises TypeError."""
+        mock_boto3 = mock.MagicMock()
+        mock_botocore, mock_botocore_exceptions = _mock_botocore_modules()
         artifact = mock.MagicMock()
         artifact.path = str(tmp_path / "test_data.json")
 
-        with pytest.raises(TypeError, match="test_data_bucket_name must be a non-empty string"):
-            test_data_loader.python_func(
-                test_data_bucket_name="",
-                test_data_path="data/test.json",
-                test_data=artifact,
-            )
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "boto3": mock_boto3,
+                "botocore": mock_botocore,
+                "botocore.exceptions": mock_botocore_exceptions,
+            },
+        ):
+            with pytest.raises(TypeError, match="test_data_bucket_name must be a non-empty string"):
+                test_data_loader.python_func(
+                    test_data_bucket_name="",
+                    test_data_path="data/test.json",
+                    test_data=artifact,
+                )
 
     @mock.patch.dict("os.environ", {"AWS_ACCESS_KEY_ID": "x"}, clear=True)
     def test_missing_required_env_variable_raises_value_error(self, tmp_path):

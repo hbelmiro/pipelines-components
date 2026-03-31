@@ -89,8 +89,10 @@ def _patch_indexing_dependencies():
         ),
         "langchain_core": mock.MagicMock(),
         "langchain_core.documents": mock.MagicMock(Document=mock_document),
-        "llama_stack_client": mock.MagicMock(LlamaStackClient=mock.MagicMock(return_value=mock_llama_client)),
+        "httpx": _make_httpx_module(),
+        "llama_stack_client": _make_llama_stack_client_module(),
     }
+    mods["llama_stack_client"].LlamaStackClient.return_value = mock_llama_client
     return mods, mock_ls_vector_store
 
 
