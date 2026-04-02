@@ -86,16 +86,12 @@ def documents_indexing(
     handler = logging.StreamHandler(sys.stdout)
     logger.addHandler(handler)
 
-    supported_vs_types = ("ls_milvus",)
     supported_distance_metrics = ("cosine", "euclidean")
     supported_chunking_methods = ("recursive",)
     supported_chunks_sizes_range = (128, 2048)
 
-    if llama_stack_vector_database_id not in supported_vs_types:
-        raise ValueError(
-            f"llama_stack_vector_database_id {llama_stack_vector_database_id} is not supported,"
-            f" supported types are {supported_vs_types}."
-        )
+    if not llama_stack_vector_database_id or not llama_stack_vector_database_id.strip():
+        raise ValueError("llama_stack_vector_database_id must be a non-empty string.")
 
     if not embedding_model_id:
         raise ValueError("embedding_model_id must be a non-empty string.")

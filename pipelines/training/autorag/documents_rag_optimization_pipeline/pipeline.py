@@ -134,7 +134,7 @@ def documents_rag_optimization_pipeline(
         extracted_text=text_extraction_task.outputs["extracted_text"],
         test_data=test_data_loader_task.outputs["test_data"],
         search_space_prep_report=mps_task.outputs["search_space_prep_report"],
-        llama_stack_vector_database_id=llama_stack_vector_database_id or "ls_milvus",
+        llama_stack_vector_database_id=llama_stack_vector_database_id,
         optimization_settings={
             "metric": optimization_metric,
             "max_number_of_rag_patterns": optimization_max_rag_patterns,
