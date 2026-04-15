@@ -6,13 +6,12 @@
 
 Run SDG LLM test flow end-to-end.
 
-Creates sample input data, runs the LLM test flow via the SDG Hub component, and outputs generated data as a KFP
-artifact.
+Creates sample input data, runs the LLM test flow via the SDG Hub component, and outputs generated data as a KFP artifact.
 
 ## Inputs 📥
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| --------- | ---- | ------- | ----------- |
 | `model` | `str` | `openai/gpt-4o-mini` | LiteLLM model identifier. |
 | `max_concurrency` | `int` | `1` | Max concurrent LLM requests. |
 | `temperature` | `float` | `0.7` | LLM sampling temperature. |

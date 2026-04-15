@@ -6,13 +6,12 @@
 
 Run an SDG Hub flow to generate synthetic data.
 
-Loads input data, selects and configures a flow, executes it, and writes the output as a JSONL artifact with execution
-metrics.
+Loads input data, selects and configures a flow, executes it, and writes the output as a JSONL artifact with execution metrics.
 
 ## Inputs 📥
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| --------- | ---- | ------- | ----------- |
 | `output_artifact` | `dsl.Output[dsl.Dataset]` | `None` | KFP Dataset artifact for downstream components. |
 | `output_metrics` | `dsl.Output[dsl.Metrics]` | `None` | KFP Metrics artifact with execution stats. |
 | `input_artifact` | `dsl.Input[dsl.Dataset]` | `None` | KFP Dataset artifact from upstream component (optional). |
